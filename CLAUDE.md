@@ -1,6 +1,6 @@
 # CLAUDE.md
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+This file provides guidance to Claude Code and other coding agents working in this repository.
 
 ## What this is
 
@@ -30,7 +30,7 @@ Everything lives in a single file: **`src/index.ts`** (~1000 lines). The logical
 
 1. **Config** — credentials and API base URLs are read from `process.env` into module constants at import time. `V1_SUNSET` (2026-10-15) is the date Google removes the v1.1 API.
 2. **Auth** — two credential paths: a **service account** (RS256 JWT-bearer grant, signed locally with `node:crypto`) or an **OAuth2 refresh token**. `getAccessToken()` prefers the service account, caches the token in a module-level `cachedToken`, and uses a **single-flight `tokenInflight` promise** so concurrent requests don't mint duplicate tokens.
-3. **`apiCall(url, options, timeoutMs)`** — the single chokepoint for every authenticated HTTP call. It attaches the Bearer token, enforces a timeout (via `AbortSignal.timeout`), and **invalidates `cachedToken` on 401/403** so auth self-recovers. **All new HTTP must go through `apiCall`** — do not add raw `fetch` calls in tool/resource handlers, or they bypass token/timeout/401 handling.
+3. **`apiCall(url, options, timeoutMs)`** — the single chokepoint for every authenticated HTTP call. It attaches the Bearer token, enforces a timeout (via `AbortSignal.timeout`), and **invalidates `cachedToken` on 401/403** so auth self-recovers. **All new HTTP must go through `apiCall`** — route every authenticated request through it so token/timeout/401 handling stays centralized; do not add raw `fetch` calls in tool/resource handlers.
 4. **Error/response helpers** — `interpretCwsError` maps CWS responses to actionable hints by **string-matching the response body** (fragile to Google wording/key changes — keep HTTP status as the primary signal). `summarizeStatus` recursively pulls a human summary out of the v2 status JSON. `formatResponse` / `appendNote` shape `ToolResult`.
 5. **`schemas` + `descriptions`** — zod input schemas and tool descriptions, declared once as the **single source of truth** and reused by both the main server and the Smithery sandbox.
 6. **Tool / resource / prompt registration** — 8 tools, 1 resource (`cws://extensions/{id}`), 2 prompts. `submit` is an **orchestrator** that runs preflight → upload → publish → status in sequence (it deliberately reuses `buildPublishBody` / `itemUrl` rather than re-implementing the individual tools' logic).
@@ -47,7 +47,7 @@ Everything lives in a single file: **`src/index.ts`** (~1000 lines). The logical
 - **`itemId` / `publisherId` are URL path segments.** `resolveItemId` / `resolvePublisherId` `encodeURIComponent` them; keep new URL building going through `itemUrl()` so this safety holds.
 - **Version is duplicated across files and must stay in sync**: `package.json` `version`, and `server.json` (two `version` fields). The publish workflow fails if the `release/x.y.z` branch name doesn't match `package.json`. Bump versions only on explicit request (use the user's `/vava` flow); do not bump as a side effect of other edits.
 - **Adding a tool** = add to `schemas` + `descriptions` + a `registerTool(...)` call. Because the sandbox auto-registers from `schemas` while the main server registers tools individually, keep the `schemas` keys and the main-server registrations in sync.
-- **`templates/CLAUDE.md` and `templates/AGENTS.md` are NOT instructions for this repo** — they are consumer-facing templates shipped to *users'* extension projects to teach their agent how to drive the `mcp__cws-mcp__*` tools. Edit them only to reflect changes in the tool surface.
+- **`templates/AGENTS.md` is NOT an instruction file for this repo** — it is a consumer-facing template shipped to *users'* extension projects to teach their agent how to drive the `mcp__cws-mcp__*` tools. It keeps the `AGENTS.md` filename because it targets consumers' own agents; leave that name as-is. Edit it only to reflect changes in the tool surface.
 
 ## Distribution
 
