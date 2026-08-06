@@ -3,14 +3,14 @@
   "name": "io.github.1llum1n4t1s/cws",
   "description": "MCP server for Chrome Web Store — extension upload, publish, status, and rollout",
   "repository": {
-    "url": "https://github.com/1llum1n4t1s/1llum1n4t1s.cws-mcp",
+    "url": "https://github.com/1llum1n4t1s/KG.cws-mcp",
     "source": "github"
   },
   "version": "2.0.1",
   "packages": [
     {
       "registryType": "npm",
-      "identifier": "@1llum1n4t1/cws-mcp",
+      "identifier": "@kagayoi/cws-mcp",
       "version": "2.0.1",
       "transport": {
         "type": "stdio"

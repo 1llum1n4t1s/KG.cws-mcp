@@ -1,6 +1,6 @@
-# @1llum1n4t1/cws-mcp
+# @kagayoi/cws-mcp
 
-[![npm version](https://img.shields.io/npm/v/@1llum1n4t1/cws-mcp)](https://www.npmjs.com/package/@1llum1n4t1/cws-mcp)
+[![npm version](https://img.shields.io/npm/v/@kagayoi/cws-mcp)](https://www.npmjs.com/package/@kagayoi/cws-mcp)
 
 [한국어](README.ko.md)
 
@@ -96,7 +96,7 @@ Add to your Claude Code MCP settings (`~/.claude/settings.local.json`).
   "mcpServers": {
     "cws-mcp": {
       "command": "npx",
-      "args": ["-y", "@1llum1n4t1/cws-mcp"],
+      "args": ["-y", "@kagayoi/cws-mcp"],
       "env": {
         "CWS_SERVICE_ACCOUNT_KEY": "/path/to/service-account.json",
         "CWS_PUBLISHER_ID": "me",

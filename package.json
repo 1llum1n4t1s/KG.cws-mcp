@@ -1,5 +1,5 @@
 {
-  "name": "@1llum1n4t1/cws-mcp",
+  "name": "@kagayoi/cws-mcp",
   "version": "2.0.1",
   "mcpName": "io.github.1llum1n4t1s/cws",
   "description": "MCP server for Chrome Web Store extension management (V2 API)",
@@ -38,11 +38,11 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/1llum1n4t1s/1llum1n4t1s.cws-mcp.git"
+    "url": "git+https://github.com/1llum1n4t1s/KG.cws-mcp.git"
   },
-  "homepage": "https://github.com/1llum1n4t1s/1llum1n4t1s.cws-mcp#readme",
+  "homepage": "https://github.com/1llum1n4t1s/KG.cws-mcp#readme",
   "bugs": {
-    "url": "https://github.com/1llum1n4t1s/1llum1n4t1s.cws-mcp/issues"
+    "url": "https://github.com/1llum1n4t1s/KG.cws-mcp/issues"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.30.0",

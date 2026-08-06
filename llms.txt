@@ -20,7 +20,7 @@
   "mcpServers": {
     "cws-mcp": {
       "command": "npx",
-      "args": ["-y", "@1llum1n4t1/cws-mcp"],
+      "args": ["-y", "@kagayoi/cws-mcp"],
       "env": {
         "CWS_CLIENT_ID": "xxxxx.apps.googleusercontent.com",
         "CWS_CLIENT_SECRET": "GOCSPX-xxxxx",
