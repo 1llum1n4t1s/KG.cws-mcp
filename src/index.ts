@@ -534,7 +534,7 @@ const schemas = {
     homepageUrl: z.string().optional().describe("Homepage URL"),
     supportUrl: z.string().optional().describe("Support URL"),
     metadata: z
-      .record(z.unknown())
+      .record(z.string(), z.unknown())
       .optional()
       .describe(
         "Raw metadata object forwarded as-is to the v1.1 API. Useful for fields not exposed as first-class params.",
