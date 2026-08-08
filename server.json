@@ -6,12 +6,12 @@
     "url": "https://github.com/1llum1n4t1s/KG.cws-mcp",
     "source": "github"
   },
-  "version": "2.0.2",
+  "version": "2.0.3",
   "packages": [
     {
       "registryType": "npm",
       "identifier": "@kagayoi/cws-mcp",
-      "version": "2.0.2",
+      "version": "2.0.3",
       "transport": {
         "type": "stdio"
       },
