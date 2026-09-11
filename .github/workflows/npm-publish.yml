@@ -1,8 +1,6 @@
 name: Publish to npm
 
-# npm publish — GitHub Secret の NPM_TOKEN (npmjs.com の Automation トークン) で認証する。
-# Secret 登録: リポジトリ Settings → Secrets and variables → Actions → NPM_TOKEN
-#   (gh CLI なら: gh secret set NPM_TOKEN < トークン)
+# npm publish は npm Trusted Publishing の OIDC 認証を使う。
 # 発火: release/x.y.z ブランチの push、または手動実行。
 
 on:
@@ -13,23 +11,28 @@ on:
 
 permissions:
   contents: read
+  id-token: write
 
 jobs:
   publish:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
       - name: pnpm セットアップ
         uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86  # v6
         with:
           version: 11
 
-      - uses: actions/setup-node@v7
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: "22"
-          registry-url: "https://registry.npmjs.org"
           cache: "pnpm"
+
+      - name: OIDC対応npm CLIを準備
+        run: npm install --global npm@11.19.1
 
       # release/x.y.z ブランチ名と package.json の version が一致するか検証。
       # bump 忘れ・誤ブランチによる二重 publish / 誤バージョン公開を発火前に止める。
@@ -50,8 +53,5 @@ jobs:
       - name: Build
         run: pnpm run build
 
-      # NPM_TOKEN は setup-node が書いた .npmrc の _authToken に注入される
       - name: Publish
-        run: npm publish
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: npm publish --access public --provenance --registry=https://registry.npmjs.org/
