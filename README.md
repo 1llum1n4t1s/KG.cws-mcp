@@ -17,7 +17,7 @@ Use this MCP when you need to:
 - **"Check the review status of my extension"** — use `status` to see review state, version, and deploy percentage
 - **"Upload and publish in one step"** — use `submit` to run upload → publish → status as a single call
 - **"Cancel a pending submission"** — use `cancel` to withdraw a submission under review
-- **"Set up staged rollout for my extension"** — use `publish` with staged rollout, then `deploy-percentage` to ramp up
+- **"Set up staged rollout for my extension"** — use `publish` with `deployPercentage`, then `deploy-percentage` to ramp up
 
 ## Tools
 
@@ -28,27 +28,18 @@ Use this MCP when you need to:
 | `status` | Fetch the current status including review state, deploy percentage, and version |
 | `cancel` | Cancel a pending submission |
 | `deploy-percentage` | Set staged rollout percentage (0-100, must exceed current target) |
-| `get` | Read draft/published listing metadata (v1.1 API, deprecated Oct 2026) |
-| `update-metadata` | Update listing metadata via v1.1 API (deprecated Oct 2026) |
+| `get`, `update-metadata` | Legacy metadata tools; blocked by the server after its v1 cutoff (see below) |
 | `submit` | One-shot: run upload → publish → status in a single call (with existence preflight and readable errors) |
 
 > The Chrome Web Store API cannot create items. Create a new item manually in the Chrome Web Store Developer Dashboard, then use `upload` / `publish` (or `submit`) against its item ID.
 
-## API Coverage
+## Listing metadata
 
-This MCP server covers **all Chrome Web Store API v2 endpoints**:
-
-| v2 Endpoint | MCP Tool |
-|---|---|
-| `media.upload` | `upload` |
-| `publishers.items.publish` | `publish` |
-| `publishers.items.fetchStatus` | `status` |
-| `publishers.items.cancelSubmission` | `cancel` |
-| `publishers.items.setPublishedDeployPercentage` | `deploy-percentage` |
-
-Additionally, v1.1 API endpoints are available for metadata operations (`get`, `update-metadata`). Since v1.1 is deprecated, listing changes after its removal must be made manually in the Chrome Web Store Developer Dashboard (the v2 API has no metadata write endpoint, and this MCP does not automate the browser).
+The server blocks `get` and `update-metadata` when its clock is later than **2026-10-15 00:00 UTC**, before making an API request. These legacy tools remain visible in discovery, but cannot be used after that cutoff. Edit listing text and other metadata manually in the Chrome Web Store Developer Dashboard; this server has no v2 metadata replacement or browser automation.
 
 ## Setup
+
+Install Node.js **20 or newer** on the machine running the MCP server. The npm configuration below runs the package through `npx`; no global package installation is needed.
 
 Authenticate with **either** a service account (recommended, ideal for CI/CD) **or** an OAuth2 refresh token.
 
@@ -85,9 +76,9 @@ See [Use a service account with the Chrome Web Store API](https://developer.chro
 
    The response contains your `refresh_token`. Any `http://localhost[:PORT]` or `http://127.0.0.1[:PORT]` redirect is accepted for Desktop-app clients.
 
-### 3. Configure MCP
+### Configure MCP
 
-Add to your Claude Code MCP settings (`~/.claude/settings.local.json`).
+Add the following server definition to your MCP client's configuration. The example uses the `mcpServers` format; use your client's documented configuration location or server-add command.
 
 **Via npm with a service account (recommended):**
 
@@ -107,14 +98,14 @@ Add to your Claude Code MCP settings (`~/.claude/settings.local.json`).
 }
 ```
 
-**From a local clone with an OAuth refresh token:**
+**Via npm with an OAuth refresh token:**
 
 ```json
 {
   "mcpServers": {
     "cws-mcp": {
-      "command": "node",
-      "args": ["/path/to/cws-mcp/dist/index.js"],
+      "command": "npx",
+      "args": ["-y", "@kagayoi/cws-mcp"],
       "env": {
         "CWS_CLIENT_ID": "xxxxx.apps.googleusercontent.com",
         "CWS_CLIENT_SECRET": "GOCSPX-xxxxx",
@@ -153,49 +144,41 @@ Use the cws-mcp status tool
 2. Use cws-mcp publish
 ```
 
-### Publish with staged rollout
+### Publish with an initial rollout percentage
 ```
 Use cws-mcp publish with:
-- publishType="STAGED_PUBLISH"
 - deployPercentage=10
 ```
+
+`publishType="STAGED_PUBLISH"` instead stages the approved version for manual publication; it does not itself set the rollout percentage. The default publication type publishes after approval. `skipReview=true` only attempts to skip review when eligible.
 
 ### Publish with skip-review
 ```
 Use cws-mcp publish with skipReview=true
 ```
 
-### Update listing title/description without publishing
-```
-Use cws-mcp update-metadata with:
-- title="Pexus"
-- summary="Official wallet for Plumise"
-- description="..."
-- category="productivity"
-- defaultLocale="en"
-```
-
-### Update advanced metadata fields
-```
-Use cws-mcp update-metadata with metadata={
-  "homepageUrl": "https://plumise.com",
-  "supportUrl": "https://plug.plumise.com/docs"
-}
-```
-
 ### Staged rollout
 ```
-1. Use cws-mcp publish
-2. Use cws-mcp deploy-percentage with percentage=10
+1. Use cws-mcp publish with deployPercentage=10
+2. After approval and publication, check the current target with cws-mcp status
 3. Use cws-mcp deploy-percentage with percentage=50
 4. Use cws-mcp deploy-percentage with percentage=100
 ```
 
 Note: `deploy-percentage` is only available for extensions with 10,000+ seven-day active users. The new percentage must always be higher than the current target.
 
-## V1 API Deprecation
+## Troubleshooting
 
-The `get` and `update-metadata` tools use the Chrome Web Store v1.1 API, which is **deprecated and will be removed after October 15, 2026**. The v2 API does not provide metadata read/write endpoints, so these tools remain available as a bridge. After v1.1 is removed, make listing changes manually in the Chrome Web Store Developer Dashboard — the v2 API has no metadata write endpoint, and this MCP does not automate the browser.
+- **Missing credentials / 401 / 403:** check the environment of the server process and item/publisher access. A configured service-account key takes precedence; invalid service-account credentials do not fall back to OAuth.
+- **Missing item / 404:** create the item in the Developer Dashboard first, then pass `itemId` or set `CWS_ITEM_ID`. There is no list-all-items tool.
+- **Unreadable ZIP:** `zipPath` must point to a file accessible on the machine running the MCP server, including inside its container if applicable. Build the ZIP before calling `upload` or `submit`.
+- **Already in review / duplicate version:** wait for review or use `cancel` before uploading; for a duplicate version, increase the extension's `manifest.json` version and rebuild its ZIP.
+- **Upload succeeded but publish failed:** retry `publish` alone. Re-running `submit` uploads the ZIP again. `submit` returns an immediate status snapshot; it does not wait for review completion. Check `status` again if the final status step failed, and inspect the raw response when a summary has no extracted issues.
+- **Legacy metadata error:** use the Developer Dashboard as described under [Listing metadata](#listing-metadata).
+
+## Development
+
+For local build commands and verification, see [AGENTS.md](AGENTS.md). For component boundaries, API mapping, and submission failure behavior, see [DESIGN.md](DESIGN.md).
 
 ## License
 

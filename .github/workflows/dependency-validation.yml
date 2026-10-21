@@ -1,0 +1,53 @@
+name: Dependency validation
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    if: github.event_name == 'workflow_dispatch' || github.event.pull_request.user.login == 'dependabot[bot]'
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@f40ffcd9367d9f12939873eb1018b921a783ffaa # v4
+        with:
+          version: '11'
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: '22'
+          cache: 'pnpm'
+      - name: Install locked dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Validate 1
+        run: pnpm exec tsc --noEmit
+      - name: Validate 2
+        run: pnpm run build
+      - name: Validate 3
+        run: |
+          node --input-type=module <<'NODE'
+          import { Client } from '@modelcontextprotocol/sdk/client/index.js';
+          import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
+          const client = new Client({ name: 'dependency-validation', version: '1.0.0' });
+          const transport = new StdioClientTransport({ command: process.execPath, args: ['dist/index.js'] });
+          const timeout = setTimeout(() => { console.error('MCP discovery timed out'); process.exit(1); }, 30000);
+          try {
+            await client.connect(transport);
+            const result = await client.listTools();
+            if (result.tools.length !== 8) throw new Error('Expected eight MCP tools');
+            console.log('MCP initialization and eight-tool discovery succeeded');
+          } finally {
+            await client.close();
+            clearTimeout(timeout);
+          }
+          NODE
