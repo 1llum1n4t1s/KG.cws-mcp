@@ -118,8 +118,10 @@ jobs:
                 held(pr, '競合があるため保留');
                 continue;
               }
-              const comparison = (await github.rest.repos.compareCommitsWithBasehead({owner, repo, basehead: `${pr.base.sha}...${sha}`, per_page: 1})).data;
-              if (comparison.merge_base_commit.sha !== pr.base.sha) {
+              // PRのbase.shaは作成時点の値を返すことがあるため、既定ブランチを直接取得する。
+              const baseSha = (await github.rest.repos.getBranch({owner, repo, branch})).data.commit.sha;
+              const comparison = (await github.rest.repos.compareCommitsWithBasehead({owner, repo, basehead: `${baseSha}...${sha}`, per_page: 1})).data;
+              if (comparison.merge_base_commit.sha !== baseSha) {
                 try {
                   await github.rest.pulls.updateBranch({owner, repo, pull_number: pr.number, expected_head_sha: sha});
                   // GITHUB_TOKEN由来の更新はPRイベントを発火しないため、CIを明示実行する。
@@ -163,7 +165,7 @@ jobs:
               }
               const currentBase = (await github.rest.repos.getBranch({owner, repo, branch})).data.commit.sha;
               pr = (await github.rest.pulls.get({owner, repo, pull_number: pr.number})).data;
-              if (pr.state !== 'open' || pr.head.sha !== sha || currentBase !== pr.base.sha || comparison.merge_base_commit.sha !== currentBase || pr.mergeable !== true) {
+              if (pr.state !== 'open' || pr.head.sha !== sha || currentBase !== baseSha || comparison.merge_base_commit.sha !== currentBase || pr.mergeable !== true) {
                 held(pr, 'head/baseまたはマージ可能状態が変化したため再検証を待機');
                 continue;
               }
