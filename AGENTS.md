@@ -1,65 +1,42 @@
-# CLAUDE.md
+# Repository guidance
 
-This file provides guidance to Claude Code and other coding agents working in this repository.
+This repository provides `@kagayoi/cws-mcp`, a stdio MCP server for Chrome Web Store extension management. Read [DESIGN.md](DESIGN.md) for architecture and [README.md](README.md) for user setup and usage.
 
-## What this is
+## Commands and verification
 
-An MCP (Model Context Protocol) server that manages Chrome Web Store extensions (upload, publish, status, staged rollout, listing metadata). It runs over **stdio** and is consumed by MCP clients (Claude Code, Smithery, etc.). It is a fork of `mikusnuz/cws-mcp` rewritten for the Chrome Web Store **API v2**.
-
-## Commands
-
-Package manager is **pnpm** (`pnpm-lock.yaml` + `pnpm-workspace.yaml` are the lockfile/config of record; `package-lock.json` is not used). Node **>=20** (`engines`); CI and Docker build on Node 22.
+Use **pnpm**; `pnpm-lock.yaml` and `pnpm-workspace.yaml` are authoritative. Do not introduce `package-lock.json`. The runtime declares Node >=20; CI and Docker use Node 22 and pnpm 11.
 
 ```bash
-pnpm install              # install deps (CI/Docker use --frozen-lockfile)
-pnpm build                # tsc -> dist/ (the published/runnable output)
-pnpm dev                  # run from source via tsx (src/index.ts), no build step
-pnpm start                # run the built server (node dist/index.js)
-pnpm exec tsc --noEmit    # type-check only — the de-facto test gate (see "Testing")
+pnpm install             # CI/Docker use --frozen-lockfile
+pnpm build               # tsc -> dist/
+pnpm dev                 # tsx src/index.ts
+pnpm start               # node dist/index.js (build first)
+pnpm exec tsc --noEmit   # required after changing src/index.ts
 ```
 
-To exercise the server manually it needs credentials in env (`CWS_SERVICE_ACCOUNT_KEY`, **or** `CWS_CLIENT_ID`/`CWS_CLIENT_SECRET`/`CWS_REFRESH_TOKEN`) plus optionally `CWS_PUBLISHER_ID` / `CWS_ITEM_ID`. See README "Environment Variables".
-
-### Testing
-
-There is **no test suite and no test runner**. `tsc --noEmit` is the only automated check. After changing `src/index.ts`, run it before considering the change done. When adding tests, the highest-value targets are the pure functions (`interpretCwsError`, `summarizeStatus`, `loadServiceAccount`, `base64url`) — they carry the non-trivial, regression-prone logic and need no network.
-
-Because `tsc` alone never executes the file, a type-clean change can still crash at import time (schema construction runs at module scope). To smoke-test the real startup path, build and drive one MCP handshake over stdio:
+There is no test suite or test runner. Type checking does not execute module-scope schema construction. After runtime/schema changes, also build and smoke-test initialization and tool discovery over stdio (Bash example):
 
 ```bash
 printf '%s\n' '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"t","version":"1"}}}' '{"jsonrpc":"2.0","method":"notifications/initialized"}' '{"jsonrpc":"2.0","id":2,"method":"tools/list"}' | node dist/index.js
 ```
 
-It should print a `serverInfo` result followed by the tool list. This needs no valid credentials — auth is lazy, so only actual tool calls hit the network.
+Expect a `serverInfo` result and eight tool definitions. Discovery requires no credentials: authentication is lazy. Actual API calls require the credentials described in README; upload/publish checks change store state, so use only an explicitly authorized item.
 
-## Architecture
+## Implementation constraints
 
-Everything lives in a single file: **`src/index.ts`** (~1000 lines). The logical layers, top to bottom:
+- Route authenticated CWS requests through `apiCall` to preserve token caching, timeouts, and cache invalidation on 401/403. Token exchange itself uses the dedicated auth functions. Invalidation affects the next request; it does not retry the failed call.
+- Resolve item and publisher IDs with `resolveItemId` / `resolvePublisherId` before building URLs. `itemUrl` expects already encoded path segments; keep upload and v1 URLs equally safe.
+- Add tools to `schemas`, `descriptions`, and the main server's `registerTool` calls together. The sandbox discovers tools from `schemas`; verify both surfaces remain aligned.
+- Keep `publish` and `submit` request construction shared through `buildPublishBody`. Preserve partial-failure details so users do not unnecessarily upload again after a publish failure.
+- Preserve the v1 tool sunset guard. The resource has a separate best-effort metadata path, described in DESIGN; do not assume the guard applies to it.
+- Error hints depend on response wording; preserve HTTP status and raw response context. Missing automatically extracted issues are not evidence of approval.
+- Preserve `"types": ["node"]` in `tsconfig.json` for TypeScript 7 and the two-argument zod 4 form `z.record(z.string(), z.unknown())`.
+- Keep stdout reserved for MCP protocol traffic; startup failures go to stderr.
 
-1. **Config** — credentials and API base URLs are read from `process.env` into module constants at import time. `V1_SUNSET` (2026-10-15) is the date Google removes the v1.1 API.
-2. **Auth** — two credential paths: a **service account** (RS256 JWT-bearer grant, signed locally with `node:crypto`) or an **OAuth2 refresh token**. `getAccessToken()` prefers the service account, caches the token in a module-level `cachedToken`, and uses a **single-flight `tokenInflight` promise** so concurrent requests don't mint duplicate tokens.
-3. **`apiCall(url, options, timeoutMs)`** — the single chokepoint for every authenticated HTTP call. It attaches the Bearer token, enforces a timeout (via `AbortSignal.timeout`), and **invalidates `cachedToken` on 401/403** so auth self-recovers. **All new HTTP must go through `apiCall`** — route every authenticated request through it so token/timeout/401 handling stays centralized; do not add raw `fetch` calls in tool/resource handlers.
-4. **Error/response helpers** — `interpretCwsError` maps CWS responses to actionable hints by **string-matching the response body** (fragile to Google wording/key changes — keep HTTP status as the primary signal). `summarizeStatus` recursively pulls a human summary out of the v2 status JSON. `formatResponse` / `appendNote` shape `ToolResult`.
-5. **`schemas` + `descriptions`** — zod input schemas and tool descriptions, declared once as the **single source of truth** and reused by both the main server and the Smithery sandbox.
-6. **Tool / resource / prompt registration** — 8 tools, 1 resource (`cws://extensions/{id}`), 2 prompts. `submit` is an **orchestrator** that runs preflight → upload → publish → status in sequence (it deliberately reuses `buildPublishBody` / `itemUrl` rather than re-implementing the individual tools' logic).
-7. **`createSandboxServer()`** — an exported, no-op server for Smithery tool discovery. It registers every key in `schemas` with a noop handler.
+## Documentation and distribution maintenance
 
-### Two API surfaces
-
-- **v2** (`chromewebstoregoogleapis.com`): upload, publish, fetchStatus, cancelSubmission, setPublishedDeployPercentage. The canonical, supported surface.
-- **v1.1** (`googleapis.com/chromewebstore/v1.1`, **deprecated, sunset 2026-10-15**): the only way to read/write listing **metadata** (`get`, `update-metadata`) — v2 has no metadata endpoint. These two tools call `v1SunsetGuard()` first, which short-circuits with a clear error once the sunset date has passed.
-
-## Conventions and constraints specific to this repo
-
-- **The CWS API cannot create items**, and there is **no "list all items" endpoint** — every operation targets a single `itemId`. The `extension-status` resource intentionally has `list: undefined` for this reason.
-- **`itemId` / `publisherId` are URL path segments.** `resolveItemId` / `resolvePublisherId` `encodeURIComponent` them; keep new URL building going through `itemUrl()` so this safety holds.
-- **Version is duplicated across files and must stay in sync**: `package.json` `version`, and `server.json` (two `version` fields). The publish workflow fails if the `release/x.y.z` branch name doesn't match `package.json`. Bump versions only on explicit request (use the user's `/vava` flow); do not bump as a side effect of other edits.
-- **Adding a tool** = add to `schemas` + `descriptions` + a `registerTool(...)` call. Because the sandbox auto-registers from `schemas` while the main server registers tools individually, keep the `schemas` keys and the main-server registrations in sync.
-- **The toolchain is on the leading edge and two settings exist only to keep it working.** TypeScript is on **v7** (the native-port compiler) and zod on **v4**. Under TS7 the repo does not compile without `"types": ["node"]` in `tsconfig.json` — without it, `node:fs`, `process`, and `Buffer` all fail to resolve. Under zod v4, `z.record()` takes **two** arguments (`z.record(z.string(), z.unknown())`); the single-argument v3 form is a type error. Don't "clean up" either of these.
-- **`templates/AGENTS.md` is NOT an instruction file for this repo** — it is a consumer-facing template shipped to *users'* extension projects to teach their agent how to drive the `mcp__cws-mcp__*` tools. It keeps the `AGENTS.md` filename because it targets consumers' own agents; leave that name as-is. Edit it only to reflect changes in the tool surface.
-
-## Distribution
-
-- **npm** as **`@kagayoi/cws-mcp`**, via GitHub Actions in `.github/workflows/npm-publish.yml` (authenticated with npm Trusted Publishing and GitHub OIDC), triggered by pushing a `release/**` branch (matches the convention used across the user's other projects). The workflow hard-fails if the branch suffix and `package.json` `version` disagree, so bump before branching. The package moved here from the deprecated `@1llum1n4t1/cws-mcp` (v2.0.1 and earlier); the npm scope name is referenced in README.md, README.ko.md, llms.txt, smithery.yaml, and `server.json` — keep them together.
-- **Dependabot** (`.github/dependabot.yml`) watches three ecosystems from the repo root: `npm`, `github-actions`, and `docker` (the last two are easy to forget since their manifests are `.github/workflows/*` and `Dockerfile`).
-- **Docker** (`Dockerfile`, multi-stage, `node:22-alpine`), **Smithery** (`smithery.yaml`), and the **MCP Registry** (`server.json`). `llms.txt` is the machine-readable summary. When the tool surface or auth options change, update README.md, README.ko.md, llms.txt, smithery.yaml, and server.json together.
+- Keep user instructions in README, structure and design decisions in DESIGN, and agent commands/constraints here; link rather than duplicate explanations.
+- When tool or auth contracts change, check README.md, README.ko.md, llms.txt, smithery.yaml, and server.json together. Keep the npm identifier `@kagayoi/cws-mcp` consistent across distribution metadata.
+- Change versions only on explicit release requests. Keep `package.json` and both version fields in `server.json` synchronized. The release workflow checks a `release/x.y.z` branch suffix against `package.json` before publishing.
+- `.github/workflows/npm-publish.yml` publishes through npm Trusted Publishing (GitHub OIDC), triggered by `release/**` pushes or `workflow_dispatch`. No npm token is required by this workflow.
+- Dependabot covers npm, GitHub Actions, and Docker from the repository root; include all three when maintaining dependency automation.
