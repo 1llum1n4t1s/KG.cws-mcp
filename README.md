@@ -173,7 +173,7 @@ Note: `deploy-percentage` is only available for extensions with 10,000+ seven-da
 - **Missing item / 404:** create the item in the Developer Dashboard first, then pass `itemId` or set `CWS_ITEM_ID`. There is no list-all-items tool.
 - **Unreadable ZIP:** `zipPath` must point to a file accessible on the machine running the MCP server, including inside its container if applicable. Build the ZIP before calling `upload` or `submit`.
 - **Already in review / duplicate version:** wait for review or use `cancel` before uploading; for a duplicate version, increase the extension's `manifest.json` version and rebuild its ZIP.
-- **Upload succeeded but publish failed:** retry `publish` alone. Re-running `submit` uploads the ZIP again. `submit` returns an immediate status snapshot; it does not wait for review completion. Check `status` again if the final status step failed, and inspect the raw response when a summary has no extracted issues.
+- **Upload succeeded but publish failed:** for an HTTP error, retry `publish` alone. If the publish request timed out or the connection failed, check `status` first because the publish result is unknown. Re-running `submit` uploads the ZIP again. `submit` retains completed steps on communication errors and returns an immediate status snapshot; it does not wait for review completion. Check `status` again if the final status step failed, and inspect the raw response when a summary has no extracted issues.
 - **Legacy metadata error:** use the Developer Dashboard as described under [Listing metadata](#listing-metadata).
 
 ## Development

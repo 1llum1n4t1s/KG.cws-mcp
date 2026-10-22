@@ -337,7 +337,8 @@ function formatResponse(result: { ok: boolean; status: number; body: string }): 
   }
 
   const hint = interpretCwsError(result.status, result.body);
-  const text = `API Error (${result.status}): ${errorDetail}` + (hint ? `\n\n${hint}` : "");
+  const rawContext = errorDetail === result.body ? "" : `\n\nResponse body:\n${result.body}`;
+  const text = `API Error (${result.status}): ${errorDetail}` + rawContext + (hint ? `\n\n${hint}` : "");
 
   return {
     content: [{ type: "text", text }],
@@ -394,9 +395,9 @@ function summarizeStatus(raw: string): string | null {
   if (!data || typeof data !== "object") return null;
   const obj = data as Record<string, unknown>;
 
-  const pick = (...keys: string[]): string | undefined => {
+  const pick = (source: Record<string, unknown>, ...keys: string[]): string | undefined => {
     for (const k of keys) {
-      const v = obj[k];
+      const v = source[k];
       if (typeof v === "string" && v) return v;
       if (typeof v === "number") return String(v);
     }
@@ -404,12 +405,34 @@ function summarizeStatus(raw: string): string | null {
   };
 
   const lines: string[] = [];
-  const state = pick("status", "state", "reviewStatus", "itemStatus");
+  const state = pick(obj, "status", "state", "reviewStatus", "itemStatus");
   if (state) lines.push(`State: ${state}`);
-  const version = pick("crxVersion", "version", "publishedVersion");
+  const version = pick(obj, "crxVersion", "version", "publishedVersion");
   if (version) lines.push(`Version: ${version}`);
-  const deploy = pick("deployPercentage", "publishedDeployPercentage");
+  const deploy = pick(obj, "deployPercentage", "publishedDeployPercentage");
   if (deploy !== undefined) lines.push(`Deploy: ${deploy}%`);
+
+  // v2 の公開版と申請版を区別し、各配信チャネルの値を生レスポンスから要約する。
+  const appendRevision = (label: string, revision: unknown): void => {
+    if (!revision || typeof revision !== "object" || Array.isArray(revision)) return;
+    const record = revision as Record<string, unknown>;
+    const revisionState = pick(record, "state");
+    if (revisionState) lines.push(`${label} state: ${revisionState}`);
+    if (!Array.isArray(record.distributionChannels)) return;
+
+    for (const [index, channel] of record.distributionChannels.entries()) {
+      if (!channel || typeof channel !== "object" || Array.isArray(channel)) continue;
+      const values = channel as Record<string, unknown>;
+      const channelVersion = pick(values, "crxVersion");
+      const channelDeploy = pick(values, "deployPercentage");
+      const details: string[] = [];
+      if (channelVersion) details.push(`version=${channelVersion}`);
+      if (channelDeploy !== undefined) details.push(`deploy=${channelDeploy}%`);
+      if (details.length > 0) lines.push(`${label} channel ${index + 1}: ${details.join(", ")}`);
+    }
+  };
+  appendRevision("Published", obj.publishedItemRevisionStatus);
+  appendRevision("Submitted", obj.submittedItemRevisionStatus);
 
   // 拒否理由・違反・警告・詳細メッセージを再帰的に集める。
   const reasons: string[] = [];
@@ -454,7 +477,6 @@ function summarizeStatus(raw: string): string | null {
     lines.push("Issues: none auto-extracted — verify the raw status response for any rejection details.");
   }
 
-  if (lines.length === 0) return null;
   return ["── Summary ──", ...lines].join("\n");
 }
 
@@ -614,7 +636,7 @@ server.registerTool(
         {
           method: "POST",
           headers: { "Content-Type": "application/zip" },
-          body: new Uint8Array(zipData),
+          body: new Uint8Array(zipData.buffer, zipData.byteOffset, zipData.byteLength),
         },
         180_000,
       );
@@ -782,13 +804,20 @@ server.registerTool(
   "submit",
   { description: descriptions.submit, inputSchema: schemas.submit },
   async ({ zipPath, itemId, publisherId, publishType, deployPercentage, skipReview, blockOnWarnings, preflight }) => {
+    const steps: { step: string; ok: boolean; detail?: string }[] = [];
+    const formatSteps = (): string => [
+      "Steps:",
+      ...steps.map((s) => `  ${s.ok ? "✓" : "✗"} ${s.step}${s.detail ? ` — ${s.detail}` : ""}`),
+    ].join("\n");
+    let currentStep = "preflight";
+    let uploadComplete = false;
+    let completedPublishResponse: string | undefined;
     try {
       const id = resolveItemId(itemId);
       const pub = resolvePublisherId(publisherId);
-      const steps: { step: string; ok: boolean; detail?: string }[] = [];
 
       // ZIP を先に読む（パス不正ならここで分かりやすく失敗）。
-      let zipData: Buffer;
+      let zipData: Buffer<ArrayBuffer>;
       try {
         zipData = readFileSync(zipPath);
       } catch (e) {
@@ -810,22 +839,28 @@ server.registerTool(
                 type: "text",
                 text:
                   `Preflight failed: item '${id}' was not found (HTTP ${pre.status}).` +
+                  `\n\nResponse body:\n${pre.body}` +
                   (hint ? `\n\n${hint}` : ""),
               },
             ],
             isError: true,
           };
         }
-        steps.push({ step: "preflight", ok: pre.ok, detail: pre.ok ? "item exists" : `status ${pre.status} (proceeding)` });
+        steps.push({
+          step: "preflight",
+          ok: pre.ok,
+          detail: pre.ok ? "item exists" : `HTTP ${pre.status} (proceeding)\n${pre.body}`,
+        });
       }
 
       // 2) Upload
+      currentStep = "upload";
       const uploadRes = await apiCall(
         `${UPLOAD_BASE}/publishers/${pub}/items/${id}:upload`,
         {
           method: "POST",
           headers: { "Content-Type": "application/zip" },
-          body: new Uint8Array(zipData),
+          body: new Uint8Array(zipData.buffer, zipData.byteOffset, zipData.byteLength),
         },
         180_000,
       );
@@ -838,10 +873,12 @@ server.registerTool(
       } catch {
         // non-JSON body — leave undefined
       }
-      // upload は HTTP 200 でも uploadState=FAILURE / itemError で失敗していることがある。
+      // upload は HTTP 200 でも uploadState=FAILED / itemError で失敗していることがある。
       // 「成功と確認できたときだけ次へ進む」方針: HTTP エラー・itemError（配列でもオブジェクトでも）・
-      // 既知の非 SUCCESS ステートは失敗扱いにし、壊れた版を黙って publish しない。
+      // 既知の非成功ステートは失敗扱いにし、壊れた版を黙って publish しない。
       // ただし進行中（IN_PROGRESS / PROCESSING）と、ステート不明（非 JSON で HTTP 200）のときは中断しない。
+      // v2 の成功値は SUCCEEDED。既存の SUCCESS 応答も互換性のため許容する。
+      const uploadSucceeded = uploadState === "SUCCEEDED" || uploadState === "SUCCESS";
       const uploadPending = uploadState === "IN_PROGRESS" || uploadState === "PROCESSING";
       const hasItemError =
         uploadItemError != null &&
@@ -849,7 +886,7 @@ server.registerTool(
       const uploadFailed =
         !uploadRes.ok ||
         hasItemError ||
-        (uploadState !== undefined && uploadState !== "SUCCESS" && !uploadPending);
+        (uploadState !== undefined && !uploadSucceeded && !uploadPending);
       steps.push({
         step: "upload",
         ok: !uploadFailed,
@@ -863,14 +900,17 @@ server.registerTool(
               type: "text",
               text:
                 `Upload failed (HTTP ${uploadRes.status}${uploadState ? `, uploadState=${uploadState}` : ""}): ${uploadRes.body}` +
-                (hint ? `\n\n${hint}` : ""),
+                  (hint ? `\n\n${hint}` : "") +
+                  `\n\n${formatSteps()}`,
             },
           ],
           isError: true,
         };
       }
+      uploadComplete = true;
 
       // 3) Publish
+      currentStep = "publish";
       const publishBody = buildPublishBody({ publishType, deployPercentage, skipReview, blockOnWarnings });
       const hasBody = Object.keys(publishBody).length > 0;
       const publishRes = await apiCall(itemUrl(pub, id, "publish"), {
@@ -890,14 +930,17 @@ server.registerTool(
                 `Upload succeeded, but publish failed (HTTP ${publishRes.status}): ${publishRes.body}` +
                 (hint ? `\n\n${hint}` : "") +
                 "\n\nNote: the new ZIP is already uploaded as a draft — no need to re-upload. " +
-                "Retry with the 'publish' tool alone; re-running 'submit' would upload the ZIP again unnecessarily.",
+                "Retry with the 'publish' tool alone; re-running 'submit' would upload the ZIP again unnecessarily." +
+                `\n\n${formatSteps()}`,
             },
           ],
           isError: true,
         };
       }
+      completedPublishResponse = publishRes.body;
 
       // 4) Final status
+      currentStep = "status";
       const statusRes = await apiCall(itemUrl(pub, id, "fetchStatus"), {
         method: "GET",
       });
@@ -907,16 +950,33 @@ server.registerTool(
       const out = [
         `✅ Submitted '${id}' for review.`,
         "",
-        "Steps:",
-        ...steps.map((s) => `  ${s.ok ? "✓" : "✗"} ${s.step}${s.detail ? ` — ${s.detail}` : ""}`),
+        formatSteps(),
       ];
       if (summary) out.push("", summary);
       // 要約のキー名マッチが外れても拒否理由を取りこぼさないよう、生 status も併記する。
-      if (statusRes.ok) out.push("", "Status response:", statusRes.body);
+      out.push("", "Status response:", statusRes.body);
       out.push("", "Publish response:", publishRes.body);
       return { content: [{ type: "text", text: out.join("\n") }], isError: false };
     } catch (e) {
-      return toolError(e);
+      steps.push({ step: currentStep, ok: false, detail: errMsg(e) });
+      if (!uploadComplete) return appendNote(toolError(e), formatSteps());
+
+      // 通信例外でも確定済みの副作用を保持し、再アップロードや公開の二重実行を防ぐ。
+      const out = [
+        completedPublishResponse !== undefined
+          ? `Upload and publish succeeded, but the final status request failed: ${errMsg(e)}`
+          : `Upload succeeded, but the publish result is unknown: ${errMsg(e)}`,
+        "",
+        formatSteps(),
+      ];
+      if (completedPublishResponse !== undefined) {
+        out.push("", "Publish response:", completedPublishResponse);
+        out.push("", "Use the 'status' tool to confirm the current state. Do not re-upload or re-submit.");
+      } else {
+        out.push("", "The ZIP is already uploaded as a draft — no need to re-upload. " +
+          "Check the 'status' tool before deciding whether to retry 'publish'; do not re-run 'submit'.");
+      }
+      return { content: [{ type: "text", text: out.join("\n") }], isError: true };
     }
   },
 );
@@ -1007,9 +1067,9 @@ Tip: for a one-shot flow, the \`submit\` tool runs preflight → upload → publ
 1. **Upload the ZIP** — Use the \`upload\` tool with zipPath="${zipPath}" and itemId="${extensionId}" to upload the new build as a draft.
 2. **Verify upload** — Use the \`status\` tool to confirm the upload succeeded and the item is in DRAFT state.
 3. **Check/update metadata** — Use the \`get\` tool (projection=DRAFT) to review current listing metadata. If text fields need updating (title, description, category), use \`update-metadata\` (v1.1, deprecated and sunset ${V1_SUNSET}); after the sunset, edit the listing in the Developer Dashboard.
-4. **Publish** — Use the \`publish\` tool to submit the draft for review. Optionally use publishType="STAGED_PUBLISH" for staged rollout, or skipReview=true if eligible.
+4. **Publish** — Use the \`publish\` tool to submit the draft for review. For an initial rollout percentage, set deployPercentage=10. Use publishType="STAGED_PUBLISH" only to wait for manual publication after approval, or skipReview=true if eligible.
 5. **Confirm submission** — Use the \`status\` tool again to confirm the item entered the review queue.
-6. **Optional staged rollout** — After approval, use \`deploy-percentage\` to gradually roll out (e.g., 10%, 50%, 100%).
+6. **Optional staged rollout** — After approval and publication, use \`deploy-percentage\` to gradually roll out (e.g., 10%, 50%, 100%).
 
 Please start with step 1 now.`,
         },

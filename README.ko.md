@@ -150,12 +150,13 @@ cws-mcp status 도구 사용
 2. cws-mcp publish
 ```
 
-### 단계적 배포로 퍼블리시
+### 초기 배포 비율을 지정하여 퍼블리시
 ```
 cws-mcp publish 사용:
-- publishType="STAGED_PUBLISH"
 - deployPercentage=10
 ```
+
+`publishType="STAGED_PUBLISH"`는 승인 후 수동 퍼블리시를 기다리도록 설정하며, 배포 비율을 지정하지 않습니다. 기본 공개 방식은 승인 후 자동으로 퍼블리시합니다.
 
 ### 리뷰 건너뛰기로 퍼블리시
 ```
@@ -183,8 +184,8 @@ cws-mcp update-metadata에서 metadata 객체 전달:
 
 ### 단계적 배포
 ```
-1. cws-mcp publish
-2. cws-mcp deploy-percentage (percentage=10)
+1. cws-mcp publish (deployPercentage=10)
+2. 승인 및 퍼블리시 후 cws-mcp status로 현재 목표 비율 확인
 3. cws-mcp deploy-percentage (percentage=50)
 4. cws-mcp deploy-percentage (percentage=100)
 ```
