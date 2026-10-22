@@ -12,6 +12,8 @@
 - get: Read draft/published listing metadata (v1.1 API, deprecated Oct 2026)
 - update-metadata: Update listing metadata via v1.1 API (deprecated Oct 2026)
 - submit: One-shot upload → publish → status in a single call (with existence-check preflight and readable errors)
+- upload/submit require confirmed upload completion (SUCCEEDED or compatible SUCCESS without itemError). Pending or unknown completion returns an error and submit does not publish; no automatic polling. Check status before publishing alone. lastAsyncUploadState covers only the latest asynchronous upload within 24 hours; verify the intended draft in the Developer Dashboard if ambiguous or another upload occurred.
+- status summaries include takenDown/warned flags and lastAsyncUploadState when provided; active policy flags require Developer Dashboard review.
 
 ## Install
 

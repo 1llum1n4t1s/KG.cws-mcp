@@ -351,6 +351,42 @@ function appendNote(result: ToolResult, note: string): ToolResult {
   return { ...result, content: [...result.content, { type: "text", text: note }] };
 }
 
+/** HTTP 成功と ZIP の処理完了を区別し、公開前の判定を共通化する。 */
+function formatUploadResponse(result: { ok: boolean; status: number; body: string }): ToolResult {
+  if (!result.ok) return appendNote(formatResponse(result), "Publish was not attempted.");
+
+  let state: unknown;
+  let itemError: unknown;
+  try {
+    const data: unknown = JSON.parse(result.body);
+    if (data && typeof data === "object" && !Array.isArray(data)) {
+      state = (data as Record<string, unknown>).uploadState;
+      itemError = (data as Record<string, unknown>).itemError;
+    }
+  } catch {
+    // 不明なレスポンスでも処理完了とはみなさず、生の応答を残す。
+  }
+  const hasItemError = itemError != null && (!Array.isArray(itemError) || itemError.length > 0);
+  if (!hasItemError && (state === "SUCCEEDED" || state === "SUCCESS")) return formatResponse(result);
+
+  const failed = hasItemError || state === "FAILED";
+  const pending = state === "IN_PROGRESS" || state === "PROCESSING" || state === "UPLOAD_IN_PROGRESS";
+  const outcome = failed ? "Upload failed" : pending ? "Upload is still processing" : "Upload completion could not be confirmed";
+  const hint = interpretCwsError(result.status, result.body);
+  return {
+    isError: true,
+    content: [{
+      type: "text",
+      text: `${outcome} (HTTP ${result.status}${typeof state === "string" ? `, uploadState=${state}` : ""}). Publish was not attempted.\n\nResponse body:\n${result.body}` +
+        (hint ? `\n\n${hint}` : "") +
+        (failed ? "" : "\n\nDo not start another upload or re-run 'submit' while this upload may be processing. " +
+          "Use 'status' to check lastAsyncUploadState. Only after confirming this ZIP succeeded, use 'publish' alone. " +
+          "The status describes the latest asynchronous upload within 24 hours, not a specific ZIP; " +
+          "if another upload occurred or the state is missing or ambiguous, verify the intended draft in the Developer Dashboard before publishing."),
+    }],
+  };
+}
+
 const V1_NOTE =
   `⚠️ This tool uses the Chrome Web Store v1.1 API, which Google will remove after ${V1_SUNSET}. ` +
   `The v2 API has no metadata read/write endpoint — after the sunset, change the store listing in the Developer Dashboard.`;
@@ -405,6 +441,14 @@ function summarizeStatus(raw: string): string | null {
   };
 
   const lines: string[] = [];
+  for (const [key, label] of [["takenDown", "Taken down"], ["warned", "Warned"]] as const) {
+    if (typeof obj[key] === "boolean") lines.push(`${label}: ${obj[key]}`);
+  }
+  const lastUpload = pick(obj, "lastAsyncUploadState");
+  if (lastUpload) lines.push(`Last upload state: ${lastUpload}`);
+  if (obj.takenDown === true || obj.warned === true) {
+    lines.push("Policy action required: check the Developer Dashboard for takedown or warning details.");
+  }
   const state = pick(obj, "status", "state", "reviewStatus", "itemStatus");
   if (state) lines.push(`State: ${state}`);
   const version = pick(obj, "crxVersion", "version", "publishedVersion");
@@ -436,6 +480,8 @@ function summarizeStatus(raw: string): string | null {
 
   // 拒否理由・違反・警告・詳細メッセージを再帰的に集める。
   const reasons: string[] = [];
+  if (obj.takenDown === true) reasons.push("takenDown: item removed for a policy violation");
+  if (obj.warned === true) reasons.push("warned: unresolved policy warning");
   const collect = (node: unknown, depth: number): void => {
     if (depth > 6 || node == null) return;
     if (Array.isArray(node)) {
@@ -596,7 +642,7 @@ const schemas = {
 
 const descriptions: Record<keyof typeof schemas, string> = {
   upload:
-    "Upload a ZIP file to update an existing Chrome Web Store item draft. Note: Creating new items via API is not supported in v2 — use the Developer Dashboard to create new items.",
+    "Upload a ZIP file to update an existing Chrome Web Store item draft. Returns success only when upload completion is confirmed; processing or unknown outcomes require status verification before publishing. Note: Creating new items via API is not supported in v2 — use the Developer Dashboard to create new items.",
   publish:
     "Publish an extension to Chrome Web Store. Supports immediate publish, staged publish, initial deploy percentage, block-on-warnings, and skip-review.",
   status:
@@ -610,7 +656,7 @@ const descriptions: Record<keyof typeof schemas, string> = {
   "update-metadata":
     `Update the store listing metadata of a Chrome Web Store item (v1.1 API). Supports common fields and a raw metadata payload. Note: the v1.1 API is deprecated and will be removed after ${V1_SUNSET}; after that, listing changes must be made in the Developer Dashboard.`,
   submit:
-    "One-shot submission: (optional preflight existence check) → upload the ZIP → verify the upload succeeded → publish for review → return the final status with a readable summary. Combines upload + publish + status and surfaces actionable errors at each step.",
+    "One-shot submission: (optional preflight existence check) → upload the ZIP → verify the upload succeeded → publish for review → return the final status with a readable summary. Stops without publishing if upload completion is unconfirmed; check status and confirm the intended draft before using publish alone. No automatic polling.",
 };
 
 // ── MCP Server ──
@@ -641,7 +687,7 @@ server.registerTool(
         180_000,
       );
 
-      return formatResponse(result);
+      return formatUploadResponse(result);
     } catch (e) {
       return toolError(e);
     }
@@ -864,49 +910,13 @@ server.registerTool(
         },
         180_000,
       );
-      let uploadState: string | undefined;
-      let uploadItemError: unknown;
-      try {
-        const j = JSON.parse(uploadRes.body) as Record<string, unknown>;
-        uploadState = typeof j.uploadState === "string" ? j.uploadState : undefined;
-        uploadItemError = j.itemError;
-      } catch {
-        // non-JSON body — leave undefined
-      }
-      // upload は HTTP 200 でも uploadState=FAILED / itemError で失敗していることがある。
-      // 「成功と確認できたときだけ次へ進む」方針: HTTP エラー・itemError（配列でもオブジェクトでも）・
-      // 既知の非成功ステートは失敗扱いにし、壊れた版を黙って publish しない。
-      // ただし進行中（IN_PROGRESS / PROCESSING）と、ステート不明（非 JSON で HTTP 200）のときは中断しない。
-      // v2 の成功値は SUCCEEDED。既存の SUCCESS 応答も互換性のため許容する。
-      const uploadSucceeded = uploadState === "SUCCEEDED" || uploadState === "SUCCESS";
-      const uploadPending = uploadState === "IN_PROGRESS" || uploadState === "PROCESSING";
-      const hasItemError =
-        uploadItemError != null &&
-        (!Array.isArray(uploadItemError) || uploadItemError.length > 0);
-      const uploadFailed =
-        !uploadRes.ok ||
-        hasItemError ||
-        (uploadState !== undefined && !uploadSucceeded && !uploadPending);
+      const uploadResult = formatUploadResponse(uploadRes);
       steps.push({
         step: "upload",
-        ok: !uploadFailed,
-        detail: `HTTP ${uploadRes.status}${uploadState ? `, uploadState=${uploadState}` : ""}`,
+        ok: !uploadResult.isError,
+        detail: `HTTP ${uploadRes.status}`,
       });
-      if (uploadFailed) {
-        const hint = interpretCwsError(uploadRes.status, uploadRes.body);
-        return {
-          content: [
-            {
-              type: "text",
-              text:
-                `Upload failed (HTTP ${uploadRes.status}${uploadState ? `, uploadState=${uploadState}` : ""}): ${uploadRes.body}` +
-                  (hint ? `\n\n${hint}` : "") +
-                  `\n\n${formatSteps()}`,
-            },
-          ],
-          isError: true,
-        };
-      }
+      if (uploadResult.isError) return appendNote(uploadResult, formatSteps());
       uploadComplete = true;
 
       // 3) Publish

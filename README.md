@@ -138,7 +138,7 @@ Provide **either** a service-account key (Auth A) **or** the OAuth2 refresh-toke
 Use the cws-mcp status tool
 ```
 
-The response includes the raw API status and a best-effort summary. When present, published and submitted revisions are shown separately, with each release channel's version and rollout percentage. A summary with no extracted issues does not confirm approval; inspect the raw response for details.
+The response includes the raw API status and a best-effort summary. When present, published and submitted revisions are shown separately, with each release channel's version and rollout percentage. Takedown and warning flags and the last asynchronous upload state are also shown when provided. A summary with no extracted issues does not confirm approval; inspect the raw response for details. Active takedowns or warnings require checking the Developer Dashboard.
 
 ### Upload and publish
 ```
@@ -174,6 +174,7 @@ Note: `deploy-percentage` is only available for extensions with 10,000+ seven-da
 - **Missing credentials / 401 / 403:** check the environment of the server process and item/publisher access. A configured service-account key takes precedence; invalid service-account credentials do not fall back to OAuth.
 - **Missing item / 404:** create the item in the Developer Dashboard first, then pass `itemId` or set `CWS_ITEM_ID`. There is no list-all-items tool.
 - **Unreadable ZIP:** `zipPath` must point to a file accessible on the machine running the MCP server, including inside its container if applicable. Build the ZIP before calling `upload` or `submit`.
+- **Upload still processing or completion unknown:** `upload` and `submit` report success only for a confirmed successful upload. `submit` stops before publishing otherwise; neither tool polls automatically. Avoid another upload or repeating `submit` while processing may continue. Use `status` to check `lastAsyncUploadState`, then use `publish` alone only after confirming the intended ZIP succeeded. This status covers the latest asynchronous upload within 24 hours, so if another upload occurred or the state is absent or ambiguous, verify the draft in the Developer Dashboard first.
 - **Already in review / duplicate version:** wait for review or use `cancel` before uploading; for a duplicate version, increase the extension's `manifest.json` version and rebuild its ZIP.
 - **Upload succeeded but publish failed:** for an HTTP error, retry `publish` alone. If the publish request timed out or the connection failed, check `status` first because the publish result is unknown. Re-running `submit` uploads the ZIP again. `submit` retains completed steps on communication errors and returns an immediate status snapshot; it does not wait for review completion. Check `status` again if the final status step failed, and inspect the raw response when a summary has no extracted issues.
 - **Legacy metadata error:** use the Developer Dashboard as described under [Listing metadata](#listing-metadata).

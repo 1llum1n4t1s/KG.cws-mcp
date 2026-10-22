@@ -145,6 +145,10 @@ cws-mcp status 도구 사용
 ```
 
 ### 업로드 후 퍼블리시
+
+`upload`와 `submit`은 업로드 완료가 확인된 경우에만 성공을 반환합니다. 처리 중이거나 완료 여부를 알 수 없으면 `submit`은 퍼블리시 전에 중단하며 자동으로 폴링하지 않습니다. 처리 중에는 다시 업로드하거나 `submit`을 반복하지 마세요. `status`의 `lastAsyncUploadState`를 확인한 뒤, 의도한 ZIP의 업로드 성공을 확인한 경우에만 `publish`를 단독 실행하세요. 이 상태는 최근 24시간 내 마지막 비동기 업로드만 나타내므로, 다른 업로드가 있었거나 상태가 없거나 불명확하면 Developer Dashboard에서 초안을 먼저 확인하세요.
+
+`status` 요약에는 응답에 포함된 삭제(`takenDown`)·경고(`warned`) 플래그와 마지막 비동기 업로드 상태가 표시됩니다. 삭제나 경고가 활성화되어 있으면 Developer Dashboard에서 상세 내용을 확인하세요.
 ```
 1. cws-mcp upload (zipPath="/path/to/extension.zip")
 2. cws-mcp publish
