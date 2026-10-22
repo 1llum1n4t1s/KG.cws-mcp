@@ -138,6 +138,8 @@ Provide **either** a service-account key (Auth A) **or** the OAuth2 refresh-toke
 Use the cws-mcp status tool
 ```
 
+The response includes the raw API status and a best-effort summary. When present, published and submitted revisions are shown separately, with each release channel's version and rollout percentage. A summary with no extracted issues does not confirm approval; inspect the raw response for details.
+
 ### Upload and publish
 ```
 1. Use cws-mcp upload with zipPath="/path/to/extension.zip"

@@ -27,7 +27,7 @@ Expect a `serverInfo` result and eight tool definitions. Discovery requires no c
 - Route authenticated CWS requests through `apiCall` to preserve token caching, timeouts, and cache invalidation on 401/403. Token exchange itself uses the dedicated auth functions. Invalidation affects the next request; it does not retry the failed call.
 - Resolve item and publisher IDs with `resolveItemId` / `resolvePublisherId` before building URLs. `itemUrl` expects already encoded path segments; keep upload and v1 URLs equally safe.
 - Add tools to `schemas`, `descriptions`, and the main server's `registerTool` calls together. The sandbox discovers tools from `schemas`; verify both surfaces remain aligned.
-- Keep `publish` and `submit` request construction shared through `buildPublishBody`. Preserve partial-failure details so users do not unnecessarily upload again after a publish failure.
+- Keep `publish` and `submit` request construction shared through `buildPublishBody`. Preserve completed steps and successful publish responses on `submit` failures. Distinguish a publish HTTP failure from an unknown outcome after a communication error; recovery for the latter starts with `status`. See [failure behavior](DESIGN.md#request-flow-and-failure-behavior).
 - Preserve the v1 tool sunset guard. The resource has a separate best-effort metadata path, described in DESIGN; do not assume the guard applies to it.
 - Error hints depend on response wording; preserve HTTP status and raw response context. Missing automatically extracted issues are not evidence of approval.
 - Preserve `"types": ["node"]` in `tsconfig.json` for TypeScript 7 and the two-argument zod 4 form `z.record(z.string(), z.unknown())`.
@@ -40,3 +40,4 @@ Expect a `serverInfo` result and eight tool definitions. Discovery requires no c
 - Change versions only on explicit release requests. Keep `package.json` and both version fields in `server.json` synchronized. The release workflow checks a `release/x.y.z` branch suffix against `package.json` before publishing.
 - `.github/workflows/npm-publish.yml` publishes through npm Trusted Publishing (GitHub OIDC), triggered by `release/**` pushes or `workflow_dispatch`. No npm token is required by this workflow.
 - Dependabot covers npm, GitHub Actions, and Docker from the repository root; include all three when maintaining dependency automation.
+- Keep dependency validation's type check, build, and credential-free eight-tool discovery check aligned with the verification above. When changing dependency workflow paths, update `REQUIRED_WORKFLOWS` in `.github/workflows/dependabot-auto-merge.yml` as well. Preserve the trusted merge job's boundary: do not check out or execute PR code there.
