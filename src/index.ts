@@ -240,6 +240,19 @@ async function apiCall(
   return { ok: res.ok, status: res.status, body };
 }
 
+/** ZIP 送信の URL・バイト範囲・タイムアウトを upload / submit で共有する。 */
+async function uploadZip(pub: string, id: string, zipData: Buffer<ArrayBuffer>) {
+  return apiCall(
+    `${UPLOAD_BASE}/publishers/${pub}/items/${id}:upload`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/zip" },
+      body: new Uint8Array(zipData.buffer, zipData.byteOffset, zipData.byteLength),
+    },
+    180_000,
+  );
+}
+
 type ToolResult = {
   content: { type: "text"; text: string }[];
   isError: boolean;
@@ -676,16 +689,7 @@ server.registerTool(
       const pub = resolvePublisherId(publisherId);
       const zipData = readFileSync(zipPath);
 
-      const url = `${UPLOAD_BASE}/publishers/${pub}/items/${id}:upload`;
-      const result = await apiCall(
-        url,
-        {
-          method: "POST",
-          headers: { "Content-Type": "application/zip" },
-          body: new Uint8Array(zipData.buffer, zipData.byteOffset, zipData.byteLength),
-        },
-        180_000,
-      );
+      const result = await uploadZip(pub, id, zipData);
 
       return formatUploadResponse(result);
     } catch (e) {
@@ -901,15 +905,7 @@ server.registerTool(
 
       // 2) Upload
       currentStep = "upload";
-      const uploadRes = await apiCall(
-        `${UPLOAD_BASE}/publishers/${pub}/items/${id}:upload`,
-        {
-          method: "POST",
-          headers: { "Content-Type": "application/zip" },
-          body: new Uint8Array(zipData.buffer, zipData.byteOffset, zipData.byteLength),
-        },
-        180_000,
-      );
+      const uploadRes = await uploadZip(pub, id, zipData);
       const uploadResult = formatUploadResponse(uploadRes);
       steps.push({
         step: "upload",
