@@ -4,7 +4,7 @@ This repository provides `@kagayoi/cws-mcp`, a stdio MCP server for Chrome Web S
 
 ## Commands and verification
 
-Use **pnpm**; `pnpm-lock.yaml` and `pnpm-workspace.yaml` are authoritative. Do not introduce `package-lock.json`. The runtime declares Node >=20; CI and Docker use Node 22 and pnpm 11.
+Use **pnpm**; `pnpm-lock.yaml` and `pnpm-workspace.yaml` are authoritative. Do not introduce `package-lock.json`. The runtime declares Node >=20; CI and Docker use Node 26 and pnpm 12.16.1.
 
 ```bash
 pnpm install             # CI/Docker use --frozen-lockfile

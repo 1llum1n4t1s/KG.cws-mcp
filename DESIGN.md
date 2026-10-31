@@ -58,4 +58,4 @@ Publish failures stop the flow and explain that the ZIP is already a draft. Succ
 - v2 is the main management surface. Legacy tool names are retained with a local cutoff instead of issuing post-cutoff requests; resource metadata remains best-effort.
 - `publishType` controls publication after approval; `deployPercentage` separately controls rollout share. Optional fields are forwarded only when supplied, leaving omitted defaults to CWS.
 - Smithery reuses contracts with no-op handlers for discovery. Importing the module still invokes `main`; the exported factory does not isolate module startup.
-- npm runs the compiled stdio entry point. Docker uses a Node 22 multi-stage build, installs production dependencies in the runtime image, and runs as `node`. Smithery maps its config to the same environment variables; `server.json` describes the npm package for MCP Registry clients.
+- npm runs the compiled stdio entry point. Docker uses a Node 26 multi-stage build, installs production dependencies in the runtime image, and runs as `node`. Smithery maps its config to the same environment variables; `server.json` describes the npm package for MCP Registry clients.
