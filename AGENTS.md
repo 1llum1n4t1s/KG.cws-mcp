@@ -4,7 +4,7 @@ This repository provides `@kagayoi/cws-mcp`, a stdio MCP server for Chrome Web S
 
 ## Commands and verification
 
-Use **pnpm**; `pnpm-lock.yaml` and `pnpm-workspace.yaml` are authoritative. Do not introduce `package-lock.json`. The runtime declares Node >=20; CI and Docker use Node 26 and pnpm 12.16.1.
+Use **pnpm**; `pnpm-lock.yaml` and `pnpm-workspace.yaml` are authoritative. Do not introduce `package-lock.json`. The runtime declares Node >=20; CI and Docker use Node 26.13.0 and pnpm 12.16.1.
 
 ```bash
 pnpm install             # CI/Docker use --frozen-lockfile
@@ -42,3 +42,4 @@ Expect a `serverInfo` result and eight tool definitions. Discovery requires no c
 - `.github/workflows/npm-publish.yml` publishes through npm Trusted Publishing (GitHub OIDC), triggered by `release/**` pushes or `workflow_dispatch`. No npm token is required by this workflow. Preserve its pack-and-verify step and publish the verified `PACKED_TARBALL` without repacking. If distribution contents or entry points change, update the workflow's archive allowlist and manifest assertions together.
 - Dependabot covers npm, GitHub Actions, and Docker from the repository root; include all three when maintaining dependency automation.
 - Keep dependency validation's type check, build, and credential-free eight-tool discovery check aligned with the verification above. When changing dependency workflow paths, update `REQUIRED_WORKFLOWS` in `.github/workflows/dependabot-auto-merge.yml` as well. Preserve the trusted merge job's boundary: do not check out or execute PR code there.
+- After publisher changes, run `pwsh -NoProfile -File scripts/Test-NpmPublisher.ps1 -WorkDirectory <dedicated-absolute-work-path>`. This compiles the C# publisher in memory using PowerShell 7.4+, with no .NET SDK or npm publication runtime. Tests use fixture archives, mocked HTTP/cosign and a localhost redirect check without live credentials. Use an empty work directory and clean its fixture files afterwards. Only an npm version lookup returning 404 permits a new publication attempt.
