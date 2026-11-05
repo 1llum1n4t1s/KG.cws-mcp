@@ -17,9 +17,9 @@
     "node": ">=20"
   },
   "scripts": {
-    "build": "tsc",
-    "start": "node dist/index.js",
-    "dev": "tsx src/index.ts"
+    "build": "bun --no-env-file --no-install --bun run tsc",
+    "start": "bun --no-env-file --no-install dist/index.js",
+    "dev": "bun --no-env-file --no-install src/index.ts"
   },
   "keywords": [
     "mcp",
