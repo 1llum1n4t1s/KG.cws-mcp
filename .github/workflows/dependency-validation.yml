@@ -20,25 +20,35 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
-        with:
-          version: '12.16.1'
-      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
-        with:
-          node-version: '26.13.0'
-          cache: 'pnpm'
+      - name: Prepare verified Bun build toolchain
+        run: |
+          set -euo pipefail
+          archive="$RUNNER_TEMP/bun-linux-x64-baseline.zip"
+          curl --fail --location --retry 3 -o "$archive" https://github.com/oven-sh/bun/releases/download/bun-v1.4.4/bun-linux-x64-baseline.zip
+          echo 'e0446eb55995772eb9894bebae9a6be368d985a8b9271ee124486f9946eedd76  '"$archive" | sha256sum -c -
+          unzip -q "$archive" -d "$RUNNER_TEMP/bun"
+          "$RUNNER_TEMP/bun/bun-linux-x64-baseline/bun" --version | grep -x '1.4.4'
+          echo "$RUNNER_TEMP/bun/bun-linux-x64-baseline" >> "$GITHUB_PATH"
       - name: Validate native npm publisher contracts
         shell: pwsh
         run: ./scripts/Test-NpmPublisher.ps1 -WorkDirectory (Join-Path $env:RUNNER_TEMP 'npm-publisher-contracts')
       - name: Install locked dependencies
-        run: pnpm install --frozen-lockfile
+        run: bun install --frozen-lockfile --no-save
       - name: Validate 1
-        run: pnpm exec tsc --noEmit
+        run: bun --bun x tsc --noEmit
       - name: Validate 2
-        run: pnpm run build
+        run: bun --bun run build
+      - name: Validate verified archive offline
+        shell: pwsh
+        run: |
+          $output = Join-Path $env:RUNNER_TEMP 'cws-offline-pack'
+          New-Item -ItemType Directory -Path $output | Out-Null
+          $archive = bun --no-env-file --no-install pm pack --destination $output --quiet
+          if ($LASTEXITCODE -ne 0) { throw 'Bun pack failed' }
+          ./scripts/Test-VerifiedNpmArchive.ps1 -PackageFile $archive -WorkDirectory (Join-Path $env:RUNNER_TEMP 'cws-offline-archive-tests')
       - name: Validate 3
         run: |
-          node --input-type=module <<'NODE'
+          bun - <<'BUN'
           import { Client } from '@modelcontextprotocol/sdk/client/index.js';
           import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
           const client = new Client({ name: 'dependency-validation', version: '1.0.0' });
@@ -53,4 +63,52 @@ jobs:
             await client.close();
             clearTimeout(timeout);
           }
+          BUN
+      - name: Prepare minimum Node compatibility runtime
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '20.0.0'
+      - name: Validate minimum Node stdio compatibility
+        run: |
+          cat > "$RUNNER_TEMP/cws-node-smoke.mjs" <<'NODE'
+          import { realpathSync } from 'node:fs';
+          import { basename } from 'node:path';
+          import { Client } from '@modelcontextprotocol/sdk/client/index.js';
+          import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
+          const expectedVersion = process.env.EXPECTED_NODE_VERSION;
+          if (process.versions.bun || process.versions.node !== expectedVersion || basename(realpathSync(process.execPath)) !== (process.platform === 'win32' ? 'node.exe' : 'node')) {
+            throw new Error(`Expected the real Node ${expectedVersion} runtime`);
+          }
+          const preload = `import { realpathSync } from 'node:fs';
+            if (process.versions.bun || process.versions.node !== process.env.EXPECTED_NODE_VERSION || realpathSync(process.execPath) !== process.env.EXPECTED_NODE_EXEC) throw new Error('Unexpected child runtime');
+            globalThis.fetch = () => { throw new Error('Unexpected network access'); };`;
+          const transport = new StdioClientTransport({
+            command: process.execPath,
+            args: ['--import', `data:text/javascript,${encodeURIComponent(preload)}`, 'dist/index.js'],
+            env: { EXPECTED_NODE_EXEC: realpathSync(process.execPath), EXPECTED_NODE_VERSION: expectedVersion, NODE_OPTIONS: '', NODE_PATH: '',
+              CWS_CLIENT_ID: 'fixture', CWS_CLIENT_SECRET: '', CWS_REFRESH_TOKEN: '',
+              CWS_SERVICE_ACCOUNT_KEY: '', CWS_ITEM_ID: 'fixture', CWS_PUBLISHER_ID: 'fixture' },
+          });
+          const client = new Client({ name: 'node-compatibility', version: '1.0.0' });
+          const timeout = setTimeout(() => { console.error('Node MCP discovery timed out'); process.exit(1); }, 30000);
+          try {
+            await client.connect(transport);
+            const result = await client.listTools();
+            if (result.tools.length !== 8) throw new Error('Expected eight MCP tools');
+            const status = await client.callTool({ name: 'status', arguments: { itemId: 'fixture' } });
+            if (!status.isError || !status.content.some(item => item.type === 'text' && item.text.includes('Missing credentials'))) {
+              throw new Error('Expected the safe missing-credentials response');
+            }
+            console.log('Node MCP initialization, eight-tool discovery and safe authentication failure succeeded');
+          } finally {
+            await client.close();
+            clearTimeout(timeout);
+          }
           NODE
+          EXPECTED_NODE_VERSION=20.0.0 node --input-type=module - < "$RUNNER_TEMP/cws-node-smoke.mjs"
+      - name: Prepare current Node compatibility runtime
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '26.13.0'
+      - name: Validate current Node stdio compatibility
+        run: EXPECTED_NODE_VERSION=26.13.0 node --input-type=module - < "$RUNNER_TEMP/cws-node-smoke.mjs"

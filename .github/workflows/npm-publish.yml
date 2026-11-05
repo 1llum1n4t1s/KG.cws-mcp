@@ -29,15 +29,21 @@ jobs:
           git -c "http.https://github.com/.extraheader=AUTHORIZATION: basic $auth" fetch --no-tags --depth=1 origin "$GITHUB_SHA"
           git checkout --detach FETCH_HEAD
 
-      - name: Prepare native Node build toolchain
-        shell: pwsh
-        run: ./scripts/Initialize-NodeBuild.ps1 -Version '26.13.0' -NpmVersion '12.2.1' -PnpmVersion '12.16.1'
+      - name: Prepare verified Bun build toolchain
+        run: |
+          set -euo pipefail
+          archive="$RUNNER_TEMP/bun-linux-x64-baseline.zip"
+          curl --fail --location --retry 3 -o "$archive" https://github.com/oven-sh/bun/releases/download/bun-v1.4.4/bun-linux-x64-baseline.zip
+          echo 'e0446eb55995772eb9894bebae9a6be368d985a8b9271ee124486f9946eedd76  '"$archive" | sha256sum -c -
+          unzip -q "$archive" -d "$RUNNER_TEMP/bun"
+          "$RUNNER_TEMP/bun/bun-linux-x64-baseline/bun" --version | grep -x '1.4.4'
+          echo "$RUNNER_TEMP/bun/bun-linux-x64-baseline" >> "$GITHUB_PATH"
 
       - name: Verify release branch matches package.json version
         if: startsWith(github.ref_name, 'release/')
         run: |
           BR="${GITHUB_REF_NAME#release/}"
-          PKG=$(node -p "require('./package.json').version")
+          PKG=$(bun -p "require('./package.json').version")
           if [ "$BR" != "$PKG" ]; then
             echo "::error::Release branch '$BR' does not match package.json version '$PKG'"
             exit 1
@@ -45,61 +51,27 @@ jobs:
           echo "Release branch and package.json agree on $PKG"
 
       - name: Install dependencies
-        run: pnpm install --frozen-lockfile
+        run: bun install --frozen-lockfile --no-save
 
       - name: Build
-        run: pnpm run build
+        run: bun --bun run build
 
       - name: Pack and verify release artifact
+        shell: pwsh
         run: |
-          node --input-type=module <<'NODE'
-          import assert from 'node:assert/strict';
-          import { execFileSync } from 'node:child_process';
-          import { createHash } from 'node:crypto';
-          import { appendFileSync, mkdtempSync, readFileSync } from 'node:fs';
-          import { join } from 'node:path';
-          const readJson = path => JSON.parse(readFileSync(path, 'utf8'));
-          const source = readJson('package.json');
-          const server = readJson('server.json');
-          assert.equal(source.name, '@kagayoi/cws-mcp');
-          assert.equal(server.version, source.version);
-          assert.equal(server.packages[0].version, source.version);
-          assert.equal(server.packages[0].identifier, source.name);
-          const output = mkdtempSync(join(process.env.RUNNER_TEMP, 'cws-release-'));
-          const raw = JSON.parse(execFileSync('npm', ['pack', '--json', '--pack-destination', output], { encoding: 'utf8' }));
-          assert.equal(Array.isArray(raw) ? raw.length : Object.keys(raw).length, 1, 'Expected one package');
-          const packed = Array.isArray(raw) ? raw[0] : raw[source.name];
-          assert.ok(packed, 'Expected package missing from npm pack output');
-          assert.equal(packed.name, source.name);
-          assert.equal(packed.version, source.version);
-          assert.match(packed.filename, /^kagayoi-cws-mcp-[0-9]+\.[0-9]+\.[0-9]+\.tgz$/);
-          const tarball = join(output, packed.filename);
-          const expected = ['LICENSE', 'README.ko.md', 'README.md', 'dist/index.d.ts', 'dist/index.js', 'package.json'];
-          const entries = execFileSync('tar', ['-tzf', tarball], { encoding: 'utf8' }).trim().split('\n').sort();
-          assert.deepEqual(entries, expected.map(file => 'package/' + file).sort());
-          const types = execFileSync('tar', ['-tvzf', tarball], { encoding: 'utf8' }).trim().split('\n');
-          assert.ok(types.every(line => line.startsWith('-')), 'Archive must contain regular files only');
-          execFileSync('tar', ['-xzf', tarball, '-C', output]);
-          const manifest = readJson(join(output, 'package/package.json'));
-          assert.equal(manifest.name, source.name);
-          assert.equal(manifest.version, source.version);
-          assert.deepEqual(manifest.bin, { 'cws-mcp': 'dist/index.js' });
-          assert.deepEqual(manifest.files, ['dist/**/*', 'LICENSE', 'README.md']);
-          assert.equal(manifest.main, 'dist/index.js');
-          for (const file of expected.filter(file => file !== 'package.json')) {
-            assert.deepEqual(readFileSync(join(output, 'package', file)), readFileSync(file), file + ' differs from release input');
-          }
-          const bytes = readFileSync(tarball);
-          const sha256 = createHash('sha256').update(bytes).digest('hex');
-          const integrity = 'sha512-' + createHash('sha512').update(bytes).digest('base64');
-          assert.equal(integrity, packed.integrity);
-          console.log(JSON.stringify({ name: source.name, version: source.version, tarball, sha256, integrity }));
-          appendFileSync(process.env.GITHUB_ENV, 'PACKED_TARBALL=' + tarball + '\nPACKED_INTEGRITY=' + integrity + '\n');
-          NODE
-
+          $output = Join-Path $env:RUNNER_TEMP 'cws-release'
+          New-Item -ItemType Directory -Path $output | Out-Null
+          $archive = bun pm pack --destination $output --quiet
+          if ($LASTEXITCODE -ne 0) { throw 'Bun pack failed' }
+          $verified = ./scripts/Verify-BunPackage.ps1 -PackageFile $archive
+          "PACKED_TARBALL=$($verified.PackageFile)" >> $env:GITHUB_ENV
+          "PACKED_INTEGRITY=$($verified.Integrity)" >> $env:GITHUB_ENV
       - name: Validate native npm publisher contracts
         shell: pwsh
         run: ./scripts/Test-NpmPublisher.ps1 -WorkDirectory (Join-Path $env:RUNNER_TEMP 'npm-publisher-contracts')
+      - name: Validate verified archive offline
+        shell: pwsh
+        run: ./scripts/Test-VerifiedNpmArchive.ps1 -PackageFile $env:PACKED_TARBALL -WorkDirectory (Join-Path $env:RUNNER_TEMP 'cws-offline-archive-tests')
       - name: Publish with native OIDC
         shell: pwsh
         run: ./scripts/Publish-Npm.ps1 -PackageFile $env:PACKED_TARBALL -ExpectedIntegrity $env:PACKED_INTEGRITY

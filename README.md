@@ -39,7 +39,7 @@ The server blocks `get` and `update-metadata` when its clock is later than **202
 
 ## Setup
 
-Install Node.js **20 or newer** on the machine running the MCP server. The npm configuration below runs the package through `npx`; no global package installation is needed.
+Install Node.js **20 or newer** to use the `npx` examples below, or install Bun and replace `"command": "npx"` and `"args": ["-y", "@kagayoi/cws-mcp"]` with `"command": "bun"` and `"args": ["x", "--bun", "@kagayoi/cws-mcp"]` to run without Node.js. Neither option requires a global package installation.
 
 Authenticate with **either** a service account (recommended, ideal for CI/CD) **or** an OAuth2 refresh token.
 

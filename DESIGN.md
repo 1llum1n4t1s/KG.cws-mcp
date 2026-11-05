@@ -58,13 +58,14 @@ Publish failures stop the flow and explain that the ZIP is already a draft. Succ
 - v2 is the main management surface. Legacy tool names are retained with a local cutoff instead of issuing post-cutoff requests; resource metadata remains best-effort.
 - `publishType` controls publication after approval; `deployPercentage` separately controls rollout share. Optional fields are forwarded only when supplied, leaving omitted defaults to CWS.
 - Smithery reuses contracts with no-op handlers for discovery. Importing the module still invokes `main`; the exported factory does not isolate module startup.
-- npm runs the compiled stdio entry point. Docker uses a Node 26.13.0 multi-stage build, installs production dependencies in the runtime image, and runs as `node`. Smithery maps its config to the same environment variables; `server.json` describes the npm package for MCP Registry clients.
+- npm runs the compiled stdio entry point under Node; `bun x --bun` also runs it without Node. Docker uses Bun 1.4.4 in a multi-stage build, installs production dependencies in the runtime image, and runs as `bun`. Smithery maps its config to the same environment variables; `server.json` describes the npm package for MCP Registry clients.
 ## npm publication
 
 The release workflow uses native git checkout with a temporary authorization
-header. `scripts/Initialize-NodeBuild.ps1` checks the official Node 26.13.0 archive
-against SHASUMS256 and prepares npm 12.2.1 / pnpm 12.16.1 for product build.
-No Node-based Action is used for checkout or toolchain setup.
+header. The release workflow downloads Bun 1.4.4 and verifies its pinned SHA-256
+before use. No Node-based Action is used for checkout or toolchain setup. The
+existing pnpm lock remains authoritative; Bun converts it in memory during a
+frozen install without writing another lockfile.
 
 The release workflow builds and verifies an npm archive before passing that same
 archive and its SHA-512 integrity to `scripts/Publish-Npm.ps1`. Publication uses
@@ -78,6 +79,7 @@ identical published version is skipped only when registry metadata also advertis
 SLSA v1 provenance at an npm registry attestation URL. The same check applies after
 PUT; missing or malformed metadata fails without retrying PUT. This metadata check
 does not cryptographically reverify the registry's stored bundle. Different bytes
-for that version stop publication. Node/npm remain responsible for product build
-and packaging. The PowerShell entry point loads C# types in a source-hash-specific
+for that version stop publication. Bun builds and packs the npm artifact; the
+workflow verifies its contents and passes the same archive and computed integrity
+to the publisher. The PowerShell entry point loads C# types in a source-hash-specific
 namespace so a different source version cannot silently reuse a previously loaded type.

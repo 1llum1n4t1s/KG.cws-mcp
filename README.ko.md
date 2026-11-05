@@ -86,6 +86,8 @@ Chrome Web Store API는 새 항목(아이템) 생성을 지원하지 않습니�
 
 Claude Code MCP 설정 (`~/.claude/settings.local.json`)에 추가합니다.
 
+아래 `npx` 예제에는 Node.js 20 이상이 필요합니다. Node.js 없이 Bun을 사용하려면 `"command": "npx"`와 `"args": ["-y", "@kagayoi/cws-mcp"]`를 각각 `"command": "bun"`과 `"args": ["x", "--bun", "@kagayoi/cws-mcp"]`로 바꾸세요.
+
 **npm + 서비스 계정 (권장):**
 
 ```json
