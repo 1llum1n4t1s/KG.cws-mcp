@@ -1,3 +1,2 @@
-# postinstall でネイティブビルドが必要な依存を明示許可（pnpm v10.12+ はここで管理）
-allowBuilds:
-  esbuild: true
+# 依存パッケージのビルドスクリプトは許可しない。
+allowBuilds: {}
