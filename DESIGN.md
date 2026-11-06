@@ -77,15 +77,13 @@ verified against a fixed SHA-256 and the upstream Sigstore signature, signs the
 npm SLSA v1 statement. The script verifies the workflow identity, GitHub issuer,
 and archive digest before uploading the archive and provenance together. An
 identical published version is skipped only when registry metadata also advertises
-SLSA v1 provenance at an npm registry attestation URL. The same check applies after
-PUT. Its exact-version GET uses `Cache-Control: no-cache` and retries only HTTP 404,
-up to six checks: immediately, then after waits of 1, 2, 4, 8 and 16 seconds (31
-seconds of additional waiting; the existing three-minute per-request HTTP timeout
-still applies). If all six checks return 404, publication fails with PUT accepted
-but the public version unconfirmed; inspect registry state before any new
-publication attempt. Other HTTP or communication failures, malformed or empty
-responses, and integrity/provenance mismatches fail immediately. Authentication,
-signing and PUT are never repeated by confirmation. This metadata check
-does not cryptographically reverify the registry's stored bundle. Different bytes
-for that version stop publication. The PowerShell entry point loads C# types in a source-hash-specific
+SLSA v1 provenance at an npm registry attestation URL. This metadata check does not
+cryptographically reverify the registry's stored bundle. Different bytes for that
+version stop publication. Only a pre-publication HTTP 404 permits a publication
+attempt; other lookup errors or malformed metadata stop it. After local archive,
+provenance signature and digest validation, a successful npm PUT is reported as
+accepted publication. The publisher does not fetch or wait for public distribution
+visibility after PUT. HTTP rejection and communication errors still fail without
+retrying PUT; inspect registry state before retrying an unknown outcome. The
+PowerShell entry point loads C# types in a source-hash-specific
 namespace so a different source version cannot silently reuse a previously loaded type.

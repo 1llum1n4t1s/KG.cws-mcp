@@ -128,6 +128,11 @@ namespace Kagayoi.Npm
                 return Task.FromResult(Bundle(publication, Mode == "subject"));
             }
         }
+        private sealed class UnreadableContent : HttpContent
+        {
+            protected override Task SerializeToStreamAsync(Stream stream, TransportContext context) => throw new IOException("Fixture response body cannot be read");
+            protected override bool TryComputeLength(out long length) { length = 0; return false; }
+        }
         private sealed class RegistryHandler : HttpMessageHandler
         {
             public Publication Publication;
@@ -152,7 +157,6 @@ namespace Kagayoi.Npm
                     Gets++;
                     Check(token == "", "Registry lookup leaked bearer token");
                     Check(url == Publisher.Registry + "@fixture%2fpackage/1.2.3", "Unexpected version confirmation endpoint");
-                    Check((request.Headers.CacheControl?.NoCache == true) == (Gets > 1), "Confirmation no-cache boundary");
                     if (Gets == 1)
                     {
                         if (Mode == "existing" || Mode == "conflict" || Existing) return Response(HttpStatusCode.OK, new JsonObject { ["dist"] = new JsonObject { ["integrity"] = Mode == "conflict" ? "wrong" : Publication.Integrity, ["attestations"] = ReplaceAttestation ? Attestation?.DeepClone() : Provenance() } }.ToJsonString());
@@ -164,16 +168,8 @@ namespace Kagayoi.Npm
                         if (Mode == "timeout") { await Task.Delay(Timeout.Infinite, ct); }
                         return Response(HttpStatusCode.NotFound, "{}");
                     }
-                    if (Mode.StartsWith("post404-", StringComparison.Ordinal))
-                    {
-                        if (Gets == 2 || Mode == "post404-missing") return Response(HttpStatusCode.NotFound, "{}");
-                        if (Mode == "post404-503") return Response(HttpStatusCode.ServiceUnavailable, "{}");
-                        if (Mode == "post404-throw") throw new HttpRequestException("fixture-secret-must-not-leak");
-                        if (Mode == "post404-empty") return Response(HttpStatusCode.OK, "");
-                        if (Mode == "post404-null") return Response(HttpStatusCode.OK, "null");
-                        if (Mode == "post404-invalid") return Response(HttpStatusCode.OK, "invalid");
-                    }
-                    return Response(HttpStatusCode.OK, new JsonObject { ["dist"] = new JsonObject { ["integrity"] = Mode == "post404-wrong" ? "wrong" : Publication.Integrity, ["attestations"] = Mode == "confirmation" || Mode == "post404-provenance" ? null : ReplaceAttestation ? Attestation?.DeepClone() : Provenance() } }.ToJsonString());
+                    if (Mode == "post-throw") throw new HttpRequestException("Unexpected post-publication GET");
+                    return Response(HttpStatusCode.NotFound, "{}");
                 }
                 if (request.RequestUri.Host.EndsWith(".actions.githubusercontent.com", StringComparison.Ordinal))
                 {
@@ -187,7 +183,7 @@ namespace Kagayoi.Npm
                     Exchanges++;
                     Check(url == Publisher.Registry + "-/npm/v1/oidc/token/exchange/package/@fixture%2fpackage", "OIDC exchange endpoint");
                     Check(token == "fixture-identity", "OIDC exchange bearer");
-                    return Response(HttpStatusCode.OK, Mode == "exchange-empty" ? "{}" : "{\"token\":\"fixture-registry-token\"}");
+                    return Response(HttpStatusCode.OK, Mode == "exchange-invalid" ? "invalid" : Mode == "exchange-empty" ? "{}" : "{\"token\":\"fixture-registry-token\"}");
                 }
                 Check(request.Method == HttpMethod.Put && url == Publisher.Registry + "@fixture%2fpackage", "Unexpected publication endpoint");
                 Check(token == "fixture-registry-token", "Registry upload bearer");
@@ -197,7 +193,8 @@ namespace Kagayoi.Npm
                 Check(Convert.FromBase64String(Publisher.Text(attachment["data"])).SequenceEqual(Publication.Bytes), "Uploaded tarball differs from verified snapshot");
                 Check(metadata["_attachments"]["@fixture/package-1.2.3.sigstore"] != null, "Missing provenance attachment");
                 if (Mode == "put-lost") throw new HttpRequestException("fixture-secret-must-not-leak");
-                return Response(Mode == "put-reject" ? HttpStatusCode.Forbidden : HttpStatusCode.Created, "{}");
+                if (Mode == "put-body-fail") return new HttpResponseMessage(HttpStatusCode.Created) { Content = new UnreadableContent() };
+                return Response(Mode == "put-reject" ? HttpStatusCode.Forbidden : HttpStatusCode.Created, Mode == "put-text" ? "Created" : Mode == "put-empty" ? "" : "{}");
             }
         }
         private sealed class Commands : ICommandRunner
@@ -247,6 +244,7 @@ namespace Kagayoi.Npm
                 JsonNode packed = shape == "array" ? (JsonNode)new JsonArray(item) : new JsonObject { ["@fixture/package"] = item };
                 var packFile = Path.Combine(root, "pack-" + shape + ".json"); File.WriteAllText(packFile, packed.ToJsonString());
                 Check(Publisher.Prepare(null, null, packFile, env).Digest == publication.Digest, "Pack result shape " + shape);
+                Check(Publisher.Prepare(null, "sha512-ignored", packFile, env).Digest == publication.Digest, "Prepare pack result integrity precedence " + shape);
             }
             Fails(() => Publisher.Prepare(file, "sha512-wrong", null, env), "integrity mismatch");
             foreach (var item in new[] { ("duplicate", manifest, true, "package/package.json"), ("missing", manifest, false, "other.json"), ("private", manifest.Replace("\"description\"", "\"private\":true,\"description\""), false, "package/package.json"), ("extensions", manifest.Replace("\"description\"", "\"packageExtensions\":{},\"description\""), false, "package/package.json"), ("version", manifest.Replace("1.2.3", "01.2.3"), false, "package/package.json") })
@@ -259,38 +257,27 @@ namespace Kagayoi.Npm
             wrongContext = new Dictionary<string, string>(env); wrongContext["GITHUB_WORKFLOW_REF"] = "other/repo/.github/workflows/publish.yml@main";
             Fails(() => Publisher.Prepare(file, Integrity(file), null, wrongContext), "workflow identity");
 
-            foreach (var mode in new[] { "success", "existing", "conflict", "unknown", "redirect", "invalid-json", "empty-lookup", "null-lookup", "timeout", "oidc-empty", "exchange-empty", "put-reject", "put-lost", "confirmation", "subject", "fail" })
+            foreach (var mode in new[] { "success", "put-body-fail", "post-throw", "put-text", "put-empty", "existing", "conflict", "unknown", "redirect", "invalid-json", "empty-lookup", "null-lookup", "timeout", "oidc-empty", "exchange-empty", "exchange-invalid", "put-reject", "put-lost", "subject", "fail" })
             {
                 publication = Publisher.Prepare(file, Integrity(file), null, env);
                 var handler = new RegistryHandler { Publication = publication, Mode = mode };
                 using (var client = new HttpClient(handler) { Timeout = mode == "timeout" ? TimeSpan.FromMilliseconds(25) : TimeSpan.FromSeconds(5) })
                 {
                     var signer = new Signer { Mode = mode };
-                    if (mode == "success" || mode == "existing") Check(Publisher.Run(file, Integrity(file), null, false, env, client, signer, true).Contains("archive", StringComparison.Ordinal), "Publish result");
-                    else Fails(() => Publisher.Run(file, Integrity(file), null, false, env, client, signer, true), new Dictionary<string, string> { ["conflict"] = "different archive", ["unknown"] = "HTTP 503", ["redirect"] = "HTTP 302", ["invalid-json"] = "invalid JSON", ["empty-lookup"] = "no document", ["null-lookup"] = "invalid JSON", ["timeout"] = "response unknown", ["oidc-empty"] = "no identity token", ["exchange-empty"] = "no token", ["put-reject"] = "HTTP 403", ["put-lost"] = "response unknown", ["confirmation"] = "confirmation failed", ["subject"] = "subject mismatch", ["fail"] = "signer failed" }[mode]);
+                    if (mode == "success" || mode == "put-body-fail" || mode == "post-throw" || mode == "put-text" || mode == "put-empty" || mode == "existing")
+                    {
+                        var result = Publisher.Run(file, Integrity(file), null, false, env, client, signer, true);
+                        Check(result == (mode == "existing" ? "Already published identical archive: " : "npm accepted publication: ") + "@fixture/package@1.2.3", "Publish result");
+                        if (mode != "existing") Check(handler.Gets == 1 && handler.Oidcs == 1 && handler.Exchanges == 1 && signer.Calls == 1 && handler.Puts == 1, "PUT acceptance repeated work or fetched public version");
+                        if (mode != "existing") Check(handler.Calls == 4 && handler.Methods.SequenceEqual(new[] { "GET", "GET", "POST", "PUT" }), "Acceptance changed auth/sign/PUT request order");
+                    }
+                    else Fails(() => Publisher.Run(file, Integrity(file), null, false, env, client, signer, true), new Dictionary<string, string> { ["conflict"] = "different archive", ["unknown"] = "HTTP 503", ["redirect"] = "HTTP 302", ["invalid-json"] = "invalid JSON", ["empty-lookup"] = "no document", ["null-lookup"] = "invalid JSON", ["timeout"] = "response unknown", ["oidc-empty"] = "no identity token", ["exchange-empty"] = "no token", ["exchange-invalid"] = "invalid JSON (POST)", ["put-reject"] = "HTTP 403", ["put-lost"] = "response unknown", ["subject"] = "subject mismatch", ["fail"] = "signer failed" }[mode]);
+                    if (mode == "exchange-invalid") Check(handler.Gets == 1 && handler.Exchanges == 1 && signer.Calls == 0 && handler.Puts == 0, "Invalid token response reached signing or publication");
                     Check(handler.Puts <= 1, "Ambiguous PUT was retried");
                     if (new[] { "existing", "conflict", "unknown", "redirect", "invalid-json", "empty-lookup", "null-lookup", "timeout" }.Contains(mode)) Check(handler.Calls == 1 && signer.Calls == 0, "Lookup failure/duplicate continued to credentials or signing");
                     if (mode == "subject" || mode == "fail") Check(handler.Puts == 0, "Signing failure uploaded package");
                     if (mode == "put-lost" || mode == "put-reject") Check(handler.Gets == 1, "Rejected/unknown PUT incorrectly confirmed");
                 }
-            }
-            // 公開直後の404だけを待ち、認証・署名・PUTは再実行しない。
-            foreach (var mode in new[] { "success", "missing", "wrong", "provenance", "503", "throw", "empty", "null", "invalid" })
-            {
-                publication = Publisher.Prepare(file, Integrity(file), null, env);
-                var handler = new RegistryHandler { Publication = publication, Mode = "post404-" + mode };
-                var signer = new Signer();
-                var waits = new List<double>();
-                Func<TimeSpan, Task> wait = delay => { waits.Add(delay.TotalSeconds); return Task.CompletedTask; };
-                using (var client = new HttpClient(handler))
-                {
-                    Action publish = () => Publisher.Publish(publication, env, client, signer, true, wait).GetAwaiter().GetResult();
-                    if (mode == "success") Check(Publisher.Publish(publication, env, client, signer, true, wait).GetAwaiter().GetResult().Contains("Published verified archive", StringComparison.Ordinal), "Delayed public version was not confirmed");
-                    else Fails(publish, new Dictionary<string, string> { ["missing"] = "PUT accepted but public version remains unconfirmed", ["wrong"] = "confirmation failed", ["provenance"] = "confirmation failed", ["503"] = "HTTP 503", ["throw"] = "response unknown", ["empty"] = "no document", ["null"] = "invalid JSON", ["invalid"] = "invalid JSON" }[mode]);
-                }
-                Check(handler.Gets == (mode == "missing" ? 7 : 3), "Confirmation GET count exceeded its boundary");
-                Check(waits.SequenceEqual(mode == "missing" ? new double[] { 1, 2, 4, 8, 16 } : new double[] { 1 }), "Confirmation wait schedule");
-                Check(handler.Oidcs == 1 && handler.Exchanges == 1 && signer.Calls == 1 && handler.Puts == 1, "Confirmation repeated authentication, signing or publication");
             }
             foreach (var url in new[] { "http://fixture.actions.githubusercontent.com/token", "https://actions.githubusercontent.com.attacker.invalid/token", "https://registry.npmjs.org/token" })
             {
@@ -299,7 +286,7 @@ namespace Kagayoi.Npm
                 using (var client = new HttpClient(handler)) Fails(() => Publisher.Publish(publication, context, client, new Signer(), true).GetAwaiter().GetResult(), "Unexpected GitHub OIDC");
                 Check(handler.Calls == 1, "Unexpected OIDC host received request");
             }
-            // PUT後の確認に失敗した版を再実行しても、未確認provenanceで成功扱いにしない。
+            // 既存版は不正・未確認provenanceで成功扱いにしない。
             foreach (var shape in new JsonNode[]
             {
                 null, new JsonObject(), JsonValue.Create("invalid"), JsonValue.Create(true), new JsonArray(),
@@ -313,16 +300,11 @@ namespace Kagayoi.Npm
                 new JsonObject { ["url"] = "https://registry.npmjs.org/-/npm/v1/attestations/@fixture%252fpackage@1.2.3", ["provenance"] = new JsonObject { ["predicateType"] = "https://slsa.dev/provenance/v1" } }
             })
             {
-                foreach (var existing in new[] { false, true })
-                {
-                    publication = Publisher.Prepare(file, Integrity(file), null, env);
-                    var handler = new RegistryHandler { Publication = publication, Existing = existing, ReplaceAttestation = true, Attestation = shape };
-                    var signer = new Signer();
-                    using (var client = new HttpClient(handler)) Fails(() => Publisher.Run(file, Integrity(file), null, false, env, client, signer, true), "provenance confirmation failed");
-                    Check(handler.Puts == (existing ? 0 : 1), "Missing provenance triggered another upload");
-                    Check(signer.Calls == (existing ? 0 : 1), "Existing version triggered credential/signing workflow");
-                    if (existing) Check(handler.Calls == 1, "Existing version used credentials or extra requests");
-                }
+                publication = Publisher.Prepare(file, Integrity(file), null, env);
+                var handler = new RegistryHandler { Publication = publication, Existing = true, ReplaceAttestation = true, Attestation = shape };
+                var signer = new Signer();
+                using (var client = new HttpClient(handler)) Fails(() => Publisher.Run(file, Integrity(file), null, false, env, client, signer, true), "provenance confirmation failed");
+                Check(handler.Puts == 0 && signer.Calls == 0 && handler.Calls == 1, "Existing version used credentials, signing or upload");
             }
             foreach (var suffix in new[] { "@fixture/package@1.2.3", "@fixture%2Fpackage@1.2.3", "%40fixture%2fpackage%401.2.3" })
                 Check(Publisher.HasProvenance(new JsonObject { ["dist"] = new JsonObject { ["attestations"] = new JsonObject { ["url"] = Publisher.Registry + "-/npm/v1/attestations/" + suffix, ["provenance"] = new JsonObject { ["predicateType"] = "https://slsa.dev/provenance/v1" } } } }, "@fixture/package", "1.2.3"), "Scoped attestation URL encoding");
