@@ -131,7 +131,7 @@ namespace Kagayoi.Npm
         private sealed class RegistryHandler : HttpMessageHandler
         {
             public Publication Publication;
-            public int Gets, Puts, Calls;
+            public int Gets, Puts, Calls, Oidcs, Exchanges;
             public string Mode = "success";
             public bool Existing, ReplaceAttestation;
             public JsonNode Attestation;
@@ -151,6 +151,8 @@ namespace Kagayoi.Npm
                 {
                     Gets++;
                     Check(token == "", "Registry lookup leaked bearer token");
+                    Check(url == Publisher.Registry + "@fixture%2fpackage/1.2.3", "Unexpected version confirmation endpoint");
+                    Check((request.Headers.CacheControl?.NoCache == true) == (Gets > 1), "Confirmation no-cache boundary");
                     if (Gets == 1)
                     {
                         if (Mode == "existing" || Mode == "conflict" || Existing) return Response(HttpStatusCode.OK, new JsonObject { ["dist"] = new JsonObject { ["integrity"] = Mode == "conflict" ? "wrong" : Publication.Integrity, ["attestations"] = ReplaceAttestation ? Attestation?.DeepClone() : Provenance() } }.ToJsonString());
@@ -162,16 +164,27 @@ namespace Kagayoi.Npm
                         if (Mode == "timeout") { await Task.Delay(Timeout.Infinite, ct); }
                         return Response(HttpStatusCode.NotFound, "{}");
                     }
-                    return Response(HttpStatusCode.OK, new JsonObject { ["dist"] = new JsonObject { ["integrity"] = Publication.Integrity, ["attestations"] = Mode == "confirmation" ? null : ReplaceAttestation ? Attestation?.DeepClone() : Provenance() } }.ToJsonString());
+                    if (Mode.StartsWith("post404-", StringComparison.Ordinal))
+                    {
+                        if (Gets == 2 || Mode == "post404-missing") return Response(HttpStatusCode.NotFound, "{}");
+                        if (Mode == "post404-503") return Response(HttpStatusCode.ServiceUnavailable, "{}");
+                        if (Mode == "post404-throw") throw new HttpRequestException("fixture-secret-must-not-leak");
+                        if (Mode == "post404-empty") return Response(HttpStatusCode.OK, "");
+                        if (Mode == "post404-null") return Response(HttpStatusCode.OK, "null");
+                        if (Mode == "post404-invalid") return Response(HttpStatusCode.OK, "invalid");
+                    }
+                    return Response(HttpStatusCode.OK, new JsonObject { ["dist"] = new JsonObject { ["integrity"] = Mode == "post404-wrong" ? "wrong" : Publication.Integrity, ["attestations"] = Mode == "confirmation" || Mode == "post404-provenance" ? null : ReplaceAttestation ? Attestation?.DeepClone() : Provenance() } }.ToJsonString());
                 }
                 if (request.RequestUri.Host.EndsWith(".actions.githubusercontent.com", StringComparison.Ordinal))
                 {
+                    Oidcs++;
                     Check(token == "fixture-request-token" && request.Method == HttpMethod.Get, "OIDC request authentication");
                     Check(request.RequestUri.Query.Contains("audience=npm%3Aregistry.npmjs.org", StringComparison.OrdinalIgnoreCase), "OIDC audience");
                     return Response(HttpStatusCode.OK, Mode == "oidc-empty" ? "{}" : "{\"value\":\"fixture-identity\"}");
                 }
                 if (request.Method == HttpMethod.Post)
                 {
+                    Exchanges++;
                     Check(url == Publisher.Registry + "-/npm/v1/oidc/token/exchange/package/@fixture%2fpackage", "OIDC exchange endpoint");
                     Check(token == "fixture-identity", "OIDC exchange bearer");
                     return Response(HttpStatusCode.OK, Mode == "exchange-empty" ? "{}" : "{\"token\":\"fixture-registry-token\"}");
@@ -260,6 +273,24 @@ namespace Kagayoi.Npm
                     if (mode == "subject" || mode == "fail") Check(handler.Puts == 0, "Signing failure uploaded package");
                     if (mode == "put-lost" || mode == "put-reject") Check(handler.Gets == 1, "Rejected/unknown PUT incorrectly confirmed");
                 }
+            }
+            // 公開直後の404だけを待ち、認証・署名・PUTは再実行しない。
+            foreach (var mode in new[] { "success", "missing", "wrong", "provenance", "503", "throw", "empty", "null", "invalid" })
+            {
+                publication = Publisher.Prepare(file, Integrity(file), null, env);
+                var handler = new RegistryHandler { Publication = publication, Mode = "post404-" + mode };
+                var signer = new Signer();
+                var waits = new List<double>();
+                Func<TimeSpan, Task> wait = delay => { waits.Add(delay.TotalSeconds); return Task.CompletedTask; };
+                using (var client = new HttpClient(handler))
+                {
+                    Action publish = () => Publisher.Publish(publication, env, client, signer, true, wait).GetAwaiter().GetResult();
+                    if (mode == "success") Check(Publisher.Publish(publication, env, client, signer, true, wait).GetAwaiter().GetResult().Contains("Published verified archive", StringComparison.Ordinal), "Delayed public version was not confirmed");
+                    else Fails(publish, new Dictionary<string, string> { ["missing"] = "PUT accepted but public version remains unconfirmed", ["wrong"] = "confirmation failed", ["provenance"] = "confirmation failed", ["503"] = "HTTP 503", ["throw"] = "response unknown", ["empty"] = "no document", ["null"] = "invalid JSON", ["invalid"] = "invalid JSON" }[mode]);
+                }
+                Check(handler.Gets == (mode == "missing" ? 7 : 3), "Confirmation GET count exceeded its boundary");
+                Check(waits.SequenceEqual(mode == "missing" ? new double[] { 1, 2, 4, 8, 16 } : new double[] { 1 }), "Confirmation wait schedule");
+                Check(handler.Oidcs == 1 && handler.Exchanges == 1 && signer.Calls == 1 && handler.Puts == 1, "Confirmation repeated authentication, signing or publication");
             }
             foreach (var url in new[] { "http://fixture.actions.githubusercontent.com/token", "https://actions.githubusercontent.com.attacker.invalid/token", "https://registry.npmjs.org/token" })
             {
