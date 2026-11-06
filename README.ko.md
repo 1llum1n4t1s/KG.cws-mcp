@@ -84,7 +84,7 @@ Chrome Web Store API는 새 항목(아이템) 생성을 지원하지 않습니�
 
 ### 3. MCP 설정
 
-Claude Code MCP 설정 (`~/.claude/settings.local.json`)에 추가합니다.
+다음 서버 정의를 MCP 클라이언트 설정에 추가하세요. 예제는 `mcpServers` 형식을 사용합니다. 설정 파일 위치나 서버 추가 명령은 사용 중인 클라이언트의 문서를 참고하세요.
 
 아래 `npx` 예제에는 Node.js 20 이상이 필요합니다. Node.js 없이 Bun을 사용하려면 `"command": "npx"`와 `"args": ["-y", "@kagayoi/cws-mcp"]`를 각각 `"command": "bun"`과 `"args": ["x", "--bun", "@kagayoi/cws-mcp"]`로 바꾸세요.
 
@@ -106,14 +106,14 @@ Claude Code MCP 설정 (`~/.claude/settings.local.json`)에 추가합니다.
 }
 ```
 
-**로컬 클론 + OAuth refresh token:**
+**npm + OAuth refresh token:**
 
 ```json
 {
   "mcpServers": {
     "cws-mcp": {
-      "command": "node",
-      "args": ["/path/to/cws-mcp/dist/index.js"],
+      "command": "npx",
+      "args": ["-y", "@kagayoi/cws-mcp"],
       "env": {
         "CWS_CLIENT_ID": "xxxxx.apps.googleusercontent.com",
         "CWS_CLIENT_SECRET": "GOCSPX-xxxxx",
