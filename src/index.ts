@@ -401,8 +401,9 @@ function formatUploadResponse(result: { ok: boolean; status: number; body: strin
 }
 
 const V1_NOTE =
-  `⚠️ This tool uses the Chrome Web Store v1.1 API, which Google will remove after ${V1_SUNSET}. ` +
-  `The v2 API has no metadata read/write endpoint — after the sunset, change the store listing in the Developer Dashboard.`;
+  `⚠️ Legacy Chrome Web Store v1.1 metadata API (cutoff: ${V1_SUNSET}). ` +
+  `After the cutoff this tool is blocked. Use 'status' for review/version/rollout information; ` +
+  `read or change listing metadata in the Developer Dashboard. The v2 API has no metadata read/write endpoint.`;
 
 /**
  * v1.1 API の sunset 後は API を叩く前に明示エラーを返す（404 の「item 不在」誤誘導を防ぐ）。
@@ -665,9 +666,9 @@ const descriptions: Record<keyof typeof schemas, string> = {
   "deploy-percentage":
     "Set the published deploy percentage for staged rollout on Chrome Web Store. The new percentage must be higher than the current target. Only available for items with 10,000+ seven-day active users.",
   get:
-    `Get the current metadata of a Chrome Web Store item (v1.1 API). Returns title, description, category, and other listing fields. Note: the v1.1 API is deprecated and will be removed after ${V1_SUNSET}.`,
+    `Legacy listing metadata read. ${V1_NOTE}`,
   "update-metadata":
-    `Update the store listing metadata of a Chrome Web Store item (v1.1 API). Supports common fields and a raw metadata payload. Note: the v1.1 API is deprecated and will be removed after ${V1_SUNSET}; after that, listing changes must be made in the Developer Dashboard.`,
+    `Legacy listing metadata update. ${V1_NOTE}`,
   submit:
     "One-shot submission: (optional preflight existence check) → upload the ZIP → verify the upload succeeded → publish for review → return the final status with a readable summary. Stops without publishing if upload completion is unconfirmed; check status and confirm the intended draft before using publish alone. No automatic polling.",
 };
@@ -1004,11 +1005,12 @@ server.registerResource(
     try {
       const pub = resolvePublisherId();
 
-      // v2 status (canonical) と v1.1 metadata (optional) は独立なので並列取得。
+      // v1.1 は tool と同じ期限判定で停止し、v2 status は引き続き取得する。
       // apiCall 経由でトークン付与・タイムアウト・401 無効化を tool 群と共有する。
+      const metadataGuard = v1SunsetGuard();
       const [statusRes, metaRes] = await Promise.all([
         apiCall(itemUrl(pub, encId, "fetchStatus"), { method: "GET" }),
-        apiCall(`${V1_BASE}/items/${encId}?projection=PUBLISHED`, { method: "GET" }).catch(
+        metadataGuard ? null : apiCall(`${V1_BASE}/items/${encId}?projection=PUBLISHED`, { method: "GET" }).catch(
           (e): { ok: boolean; status: number; body: string } => ({ ok: false, status: 0, body: errMsg(e) }),
         ),
       ]);
@@ -1022,7 +1024,9 @@ server.registerResource(
       };
 
       const statusData = parseBody(statusRes.body);
-      const metaData = metaRes.ok
+      const metaData = metaRes === null
+        ? { unavailable: metadataGuard!.content.map((part) => part.type === "text" ? part.text : "").join("\n") }
+        : metaRes.ok
         ? parseBody(metaRes.body)
         : {
             unavailable: `v1.1 metadata fetch failed (the v1.1 API is deprecated after ${V1_SUNSET}): ${metaRes.body}`,
@@ -1071,10 +1075,10 @@ ZIP file: ${zipPath}${version ? `\nNew version: ${version}` : ""}
 Tip: for a one-shot flow, the \`submit\` tool runs preflight → upload → publish → status in a single call. (A brand-new extension must first be created in the Developer Dashboard — the CWS API cannot create items.) The step-by-step flow below is the manual equivalent:
 
 1. **Upload the ZIP** — Use the \`upload\` tool with zipPath="${zipPath}" and itemId="${extensionId}" to upload the new build as a draft.
-2. **Verify upload** — Use the \`status\` tool to confirm the upload succeeded and the item is in DRAFT state.
-3. **Check/update metadata** — Use the \`get\` tool (projection=DRAFT) to review current listing metadata. If text fields need updating (title, description, category), use \`update-metadata\` (v1.1, deprecated and sunset ${V1_SUNSET}); after the sunset, edit the listing in the Developer Dashboard.
+2. **Verify upload** — Proceed to \`publish\` only after the intended ZIP's successful upload is confirmed, either by the \`upload\` response or by the recovery checks below. If processing or completion is unknown, do not start another upload or re-run \`submit\` while it may still be processing; check \`status\` for \`lastAsyncUploadState\`. It describes only the latest asynchronous upload within 24 hours, not a specific ZIP; if absent, ambiguous, or another upload occurred, verify the intended draft in the Developer Dashboard. Once the intended ZIP's success is confirmed, continue with the remaining steps and use \`publish\` alone when ready.
+3. **Check/update metadata** — Review listing metadata (title, description, category) in the Developer Dashboard and edit it only if needed. Do not call \`get\` or \`update-metadata\` after the v1.1 cutoff (${V1_SUNSET}); those tools are blocked and v2 has no metadata read/write replacement.
 4. **Publish** — Use the \`publish\` tool to submit the draft for review. For an initial rollout percentage, set deployPercentage=10. Use publishType="STAGED_PUBLISH" only to wait for manual publication after approval, or skipReview=true if eligible.
-5. **Confirm submission** — Use the \`status\` tool again to confirm the item entered the review queue.
+5. **Confirm submission** — Use \`status\` to check the returned submitted/published revision state.
 6. **Optional staged rollout** — After approval and publication, use \`deploy-percentage\` to gradually roll out (e.g., 10%, 50%, 100%).
 
 Please start with step 1 now.`,
@@ -1105,12 +1109,12 @@ Extension ID: ${extensionId}
 
 Use the following cws-mcp tools to gather a full picture:
 
-1. **Fetch status** — Use the \`status\` tool with itemId="${extensionId}" to get the review status and any rejection reasons.
-2. **Fetch metadata** — Use the \`get\` tool with itemId="${extensionId}" and projection=PUBLISHED to see what is currently live (v1.1 API, sunset ${V1_SUNSET}).
+1. **Fetch status** — Use the \`status\` tool with itemId="${extensionId}" to get the returned revision states and deployment information.
+2. **Listing metadata, if needed** — Read it in the Developer Dashboard. Do not call \`get\` or \`update-metadata\` after the v1.1 cutoff (${V1_SUNSET}); those tools are blocked. The \`status\` response supplies review/version/rollout information, not listing text.
 3. **Summarize** — Report:
-   - Current review state (e.g., IN_REVIEW, PUBLISHED, REJECTED, DRAFT)
+   - Returned revision states (e.g., PENDING_REVIEW, STAGED, PUBLISHED, REJECTED)
    - Deployed version and deploy percentage if in staged rollout
-   - Any rejection reason or action required
+   - Review or rejection details if returned. If a rejection, takedown, warning, or other problem is indicated but its details are missing or unclear, check the Developer Dashboard. Do not infer approval from missing problem details.
    - Recommended next steps (e.g., fix policy violations, increase deploy-percentage, or no action needed)
 
 Please start with step 1 now.`,

@@ -37,6 +37,8 @@ Use this MCP when you need to:
 
 The server blocks `get` and `update-metadata` when its clock is later than **2026-10-15 00:00 UTC**, before making an API request. These legacy tools remain visible in discovery, but cannot be used after that cutoff. Edit listing text and other metadata manually in the Chrome Web Store Developer Dashboard; this server has no v2 metadata replacement or browser automation.
 
+Use `status` for review state, version, and rollout information. Prompts direct listing metadata work to the Developer Dashboard. The `cws://extensions/{extensionId}` resource still returns v2 status after the cutoff, skips the v1 request, and reports `metadata.unavailable`.
+
 ## Setup
 
 Install Node.js **20 or newer** to use the `npx` examples below, or install Bun and replace `"command": "npx"` and `"args": ["-y", "@kagayoi/cws-mcp"]` with `"command": "bun"` and `"args": ["x", "--bun", "@kagayoi/cws-mcp"]` to run without Node.js. Neither option requires a global package installation.

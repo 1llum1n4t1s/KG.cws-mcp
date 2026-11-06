@@ -36,9 +36,9 @@ The v2 base is `https://chromewebstore.googleapis.com`; uploads use `/upload/v2/
 
 The two legacy tools remain registered, but `v1SunsetGuard` returns an error before authentication/network access when the clock is later than `2026-10-15T00:00:00Z`. There is no v2 metadata replacement in this server.
 
-The resource `cws://extensions/{extensionId}` uses the configured publisher and fetches v2 status and published v1 metadata concurrently. Unlike the legacy tools, it does not use the sunset guard: it still attempts metadata retrieval and represents failure as `metadata.unavailable`. Status HTTP errors are included as parsed response data. Resource enumeration is disabled because there is no list-all-items operation.
+The resource `cws://extensions/{extensionId}` uses the configured publisher and fetches v2 status and, before the cutoff, published v1 metadata concurrently. It shares the legacy tool sunset guard: after the cutoff it skips the v1 request and returns `metadata.unavailable` with Dashboard guidance. Metadata request failures before the cutoff also return `metadata.unavailable`. Status HTTP errors are included as parsed response data. Resource enumeration is disabled because there is no list-all-items operation.
 
-`publish_extension` and `check_status` generate guidance messages rather than execute tools. Their legacy metadata instructions remain in the prompt text; the tool guard still controls execution.
+`publish_extension` and `check_status` generate guidance messages rather than execute tools. They direct listing metadata work to the Developer Dashboard and warn against calling the blocked legacy tools after the cutoff. Tool descriptions provide the same guidance and direct review/version/rollout queries to `status`.
 
 ## Request flow and failure behavior
 
@@ -55,7 +55,7 @@ Publish failures stop the flow and explain that the ZIP is already a draft. Succ
 - A single runtime module keeps this small adapter's registrations and helpers together. Shared schemas prevent discovery drift, but main registrations still require explicit synchronization.
 - Centralized HTTP/auth handling gives tools and resources consistent limits and token behavior. Single-flight acquisition avoids duplicate token requests; in-memory state is lost on process exit.
 - ZIP bytes are forwarded through a view of the read buffer with `application/zip`, avoiding an additional full-archive copy in the adapter. The entire archive is still read into memory, and the server does not build or inspect the extension ZIP.
-- v2 is the main management surface. Legacy tool names are retained with a local cutoff instead of issuing post-cutoff requests; resource metadata remains best-effort.
+- v2 is the main management surface. Legacy tool names are retained with a local cutoff instead of issuing post-cutoff requests; resource metadata uses the same cutoff and remains best-effort before it.
 - `publishType` controls publication after approval; `deployPercentage` separately controls rollout share. Optional fields are forwarded only when supplied, leaving omitted defaults to CWS.
 - Smithery reuses contracts with no-op handlers for discovery. Importing the module still invokes `main`; the exported factory does not isolate module startup.
 - npm runs the compiled stdio entry point under Node; `bun x --bun` also runs it without Node. Docker uses Bun 1.4.4 in a multi-stage build, installs production dependencies in the runtime image, and runs as `bun`. Smithery maps its config to the same environment variables; `server.json` describes the npm package for MCP Registry clients.
@@ -71,7 +71,7 @@ The release workflow builds and verifies an npm archive before passing that same
 archive and its SHA-512 integrity to `scripts/Publish-Npm.ps1`. Publication uses
 C# in `scripts/NpmPublisher.cs`, compiled in memory by the thin PowerShell 7.4+
 entry point using `Add-Type`, with GitHub OIDC Trusted Publishing. No Node.js,
-npm CLI, .NET SDK or NuGet packages are required for publication. Native cosign 3.0.4,
+npm CLI, .NET SDK or NuGet packages are required for publication. Native cosign 3.1.4,
 verified against a fixed SHA-256 and the upstream Sigstore signature, signs the
 npm SLSA v1 statement. The script verifies the workflow identity, GitHub issuer,
 and archive digest before uploading the archive and provenance together. An

@@ -14,7 +14,7 @@ bun --no-env-file --no-install dist/index.js # production (build first)
 bun --bun x tsc --noEmit # required after changing src/index.ts
 ```
 
-There is no test suite or test runner. Type checking does not execute module-scope schema construction. After runtime/schema changes, also build and smoke-test initialization and tool discovery over stdio (Bash example):
+There is no dedicated TypeScript application test suite or test runner. Type checking does not execute module-scope schema construction. After runtime/schema changes, also build and smoke-test initialization and tool discovery over stdio (Bash example):
 
 ```bash
 printf '%s\n' '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"t","version":"1"}}}' '{"jsonrpc":"2.0","method":"notifications/initialized"}' '{"jsonrpc":"2.0","id":2,"method":"tools/list"}' | bun --no-env-file --no-install dist/index.js
@@ -29,7 +29,7 @@ Expect a `serverInfo` result and eight tool definitions. Discovery requires no c
 - Add tools to `schemas`, `descriptions`, and the main server's `registerTool` calls together. The sandbox discovers tools from `schemas`; verify both surfaces remain aligned.
 - Keep `upload` and `submit` on the shared `uploadZip` / `formatUploadResponse` path. HTTP success alone must not permit publishing: require confirmed upload completion as described in [failure behavior](DESIGN.md#request-flow-and-failure-behavior).
 - Keep `publish` and `submit` request construction shared through `buildPublishBody`. Preserve completed steps and successful publish responses on `submit` failures. Distinguish a publish HTTP failure from an unknown outcome after a communication error; recovery for the latter starts with `status`. See [failure behavior](DESIGN.md#request-flow-and-failure-behavior).
-- Preserve the v1 tool sunset guard. The resource has a separate best-effort metadata path, described in DESIGN; do not assume the guard applies to it.
+- Preserve the shared v1 sunset guard for legacy tools and resource metadata. After the cutoff, resource reads must still fetch v2 status without requesting v1 metadata. Descriptions and prompts must not recommend the blocked tools.
 - Error hints depend on response wording; preserve HTTP status and raw response context. Missing automatically extracted issues are not evidence of approval.
 - Preserve `"types": ["node"]` in `tsconfig.json` for TypeScript 7 and the two-argument zod 4 form `z.record(z.string(), z.unknown())`.
 - Keep stdout reserved for MCP protocol traffic; startup failures go to stderr.

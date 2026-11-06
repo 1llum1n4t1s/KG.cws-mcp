@@ -26,12 +26,12 @@ Chrome Web Store 확장 프로그램 관리를 위한 MCP 서버. Claude Code �
 | `status` | 리뷰 상태, 배포 비율, 버전 등 현재 상태 확인 |
 | `cancel` | 제출 대기 중인 항목 취소 |
 | `deploy-percentage` | 단계적 배포 비율 설정 (0-100, 현재 목표보다 높아야 함) |
-| `get` | DRAFT/PUBLISHED 리스팅 메타데이터 조회 (v1.1 API, 2026년 10월 지원 종료) |
-| `update-metadata` | v1.1 API로 리스팅 메타데이터 업데이트 (2026년 10월 지원 종료) |
+| `get` | 이전 메타데이터 조회 도구; 2026-10-15 00:00 UTC 이후 차단 |
+| `update-metadata` | 이전 메타데이터 수정 도구; 2026-10-15 00:00 UTC 이후 차단 |
 
 ## API 커버리지
 
-이 MCP 서버는 **모든 Chrome Web Store API v2 엔드포인트**를 지원합니다:
+이 MCP 서버는 **다음 Chrome Web Store API v2 엔드포인트**를 지원합니다:
 
 | v2 엔드포인트 | MCP 도구 |
 |---|---|
@@ -41,7 +41,7 @@ Chrome Web Store 확장 프로그램 관리를 위한 MCP 서버. Claude Code �
 | `publishers.items.cancelSubmission` | `cancel` |
 | `publishers.items.setPublishedDeployPercentage` | `deploy-percentage` |
 
-추가로, 메타데이터 조작을 위한 v1.1 API 엔드포인트(`get`, `update-metadata`)가 제공됩니다. v1.1 지원 종료 이후의 리스팅 변경은 Chrome Web Store 개발자 대시보드에서 수동으로 진행하세요 (v2 API에는 메타데이터 쓰기 엔드포인트가 없으며, 이 MCP는 브라우저 자동화를 사용하지 않습니다).
+이전 v1.1 도구(`get`, `update-metadata`)는 호환성을 위해 등록되어 있지만 종료 시각 이후 차단됩니다. 리스팅 메타데이터는 Chrome Web Store 개발자 대시보드에서 확인하고 수정하세요. 심사 상태, 버전, 배포 비율은 `status`를 사용하세요. v2 API에는 메타데이터 읽기/쓰기 엔드포인트가 없으며 이 MCP는 브라우저 자동화를 사용하지 않습니다.
 
 Chrome Web Store API는 새 항목(아이템) 생성을 지원하지 않습니다. 새 항목은 Chrome Web Store 개발자 대시보드에서 수동으로 만든 뒤, 발급된 Item ID를 `CWS_ITEM_ID`에 설정해 이 도구들로 관리하세요.
 
@@ -169,24 +169,9 @@ cws-mcp publish 사용:
 cws-mcp publish에서 skipReview=true 사용
 ```
 
-### 퍼블리시 없이 제목/설명 업데이트
-```
-cws-mcp update-metadata 사용:
-- title="Pexus"
-- summary="Official wallet for Plumise"
-- description="..."
-- category="productivity"
-- defaultLocale="en"
-```
+### 리스팅 메타데이터 확인 및 수정
 
-### 고급 메타데이터 업데이트
-```
-cws-mcp update-metadata에서 metadata 객체 전달:
-{
-  "homepageUrl": "https://plumise.com",
-  "supportUrl": "https://plug.plumise.com/docs"
-}
-```
+제목, 설명, 카테고리, 언어, 홈페이지 및 지원 URL은 Chrome Web Store 개발자 대시보드에서 확인하고 수정하세요. v1.1 종료 이후 `get`과 `update-metadata`를 호출하지 마세요.
 
 ### 단계적 배포
 ```
@@ -200,7 +185,7 @@ cws-mcp update-metadata에서 metadata 객체 전달:
 
 ## V1 API 지원 종료 안내
 
-`get`과 `update-metadata` 도구는 Chrome Web Store v1.1 API를 사용하며, **2026년 10월 15일 이후 지원이 종료**됩니다. v2 API에는 메타데이터 읽기/쓰기 엔드포인트가 없어 이 도구들이 브릿지 역할을 합니다. v1.1 지원 종료 이후의 리스팅 변경은 Chrome Web Store 개발자 대시보드에서 수동으로 진행하세요 (v2 API에는 메타데이터 쓰기 엔드포인트가 없으며, 이 MCP는 브라우저 자동화를 사용하지 않습니다).
+`get`과 `update-metadata`는 서버 시계가 **2026-10-15 00:00 UTC**를 지나면 인증 및 API 요청 전에 차단됩니다. v2 API에는 메타데이터 읽기/쓰기 엔드포인트가 없으므로 개발자 대시보드를 사용하세요. 프롬프트도 대시보드로 안내합니다. `cws://extensions/{extensionId}` 리소스는 종료 이후 v1 요청을 생략하고 v2 상태와 `metadata.unavailable`을 반환합니다.
 
 ## 라이선스
 
