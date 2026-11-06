@@ -59,6 +59,7 @@ Publish failures stop the flow and explain that the ZIP is already a draft. Succ
 - `publishType` controls publication after approval; `deployPercentage` separately controls rollout share. Optional fields are forwarded only when supplied, leaving omitted defaults to CWS.
 - Smithery reuses contracts with no-op handlers for discovery. Importing the module still invokes `main`; the exported factory does not isolate module startup.
 - npm runs the compiled stdio entry point under Node; `bun x --bun` also runs it without Node. Docker uses Bun 1.4.4 in a multi-stage build, installs production dependencies in the runtime image, and runs as `bun`. Smithery maps its config to the same environment variables; `server.json` describes the npm package for MCP Registry clients.
+
 ## npm publication
 
 The release workflow uses native git checkout with a temporary authorization
@@ -86,7 +87,5 @@ publication attempt. Other HTTP or communication failures, malformed or empty
 responses, and integrity/provenance mismatches fail immediately. Authentication,
 signing and PUT are never repeated by confirmation. This metadata check
 does not cryptographically reverify the registry's stored bundle. Different bytes
-for that version stop publication. Bun builds and packs the npm artifact; the
-workflow verifies its contents and passes the same archive and computed integrity
-to the publisher. The PowerShell entry point loads C# types in a source-hash-specific
+for that version stop publication. The PowerShell entry point loads C# types in a source-hash-specific
 namespace so a different source version cannot silently reuse a previously loaded type.
