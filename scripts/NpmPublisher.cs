@@ -221,8 +221,8 @@ namespace Kagayoi.Npm
     }
     internal sealed class NativeSigner : ISigner
     {
-        internal const string CosignSha256 = "10DAB2FD2170B5AA0D5C0673A9A2793304960220B314F6A873BF39C2F08287AA";
-        internal const string ReleaseUrl = "https://github.com/sigstore/cosign/releases/download/v3.0.4/cosign-linux-amd64";
+        internal const string CosignSha256 = "424E2C97D0B45FD7A6B608A87F090F35633F4C23ECE5F092D48BBA11AAF4BBFA";
+        internal const string ReleaseUrl = "https://github.com/sigstore/cosign/releases/download/v3.1.4/cosign-linux-amd64";
         private readonly HttpClient download;
         private readonly ICommandRunner runner;
         private readonly string expectedSha256;
