@@ -68,18 +68,16 @@ before use. No Node-based Action is used for checkout or toolchain setup. The
 existing pnpm lock remains authoritative; Bun converts it in memory during a
 frozen install without writing another lockfile.
 
-The release workflow publishes only its verified archive and SHA-512 through
-scripts/Publish-Npm.ps1, using C# compiled in memory by PowerShell 7.4+ Add-Type.
-The self-hosted Linux workflow supplies secrets.NPM_TOKEN as NODE_AUTH_TOKEN only
-to the publication step. Direct calls may use NPM_TOKEN as fallback. The token
-must grant package publication. No Node/npm, .NET SDK, NuGet, OIDC exchange or
-cosign is needed. Provenance is omitted because npm does not support trusted
-publishing/provenance on self-hosted runners. The exact archive digest is rechecked
-immediately before PUT. Existing versions require identical registry integrity;
-missing attestations are accepted, while old provenance metadata must retain its
-SLSA v1 type and package-specific npm registry URL. This does not cryptographically
-reverify old bundles. Only a pre-publication 404 permits PUT. A successful PUT
-header means npm acceptance without body parsing or waiting for propagation.
-Rejection and unknown outcomes fail without retrying PUT; inspect registry state
-before retrying an unknown outcome. Source-hash-specific namespaces preserve
-PowerShell source reload isolation.
+The release workflow keeps npm Trusted Publishing (GitHub OIDC). Install, build,
+pack, verification and publication run on GitHub-hosted ubuntu-latest to meet
+the cloud-hosted build requirement for npm provenance. Normal dependency
+validation remains on M3MB14 Linux ARM64. The verified SHA-512 and manifest
+are checked before publishing the same archive without repacking. Native C#/.NET and
+PowerShell publish through OIDC exchange and cosign 3.1.4 provenance. Binary hash,
+upstream signature, signed subject, workflow identity, issuer and archive digest
+checks remain in place. Identical existing versions require valid provenance
+metadata. A successful PUT header means npm acceptance; its body is not parsed,
+and the publisher does not wait for public registry propagation. Unknown results
+are not retried. Source-hash-specific namespaces retain source reload isolation.
+No saved npm publication token is used. Existing release/manual publication
+conditions are maintained. The workflow filename is unchanged for the existing npm Trusted Publisher.
