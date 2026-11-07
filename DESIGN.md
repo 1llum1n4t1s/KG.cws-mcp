@@ -68,22 +68,18 @@ before use. No Node-based Action is used for checkout or toolchain setup. The
 existing pnpm lock remains authoritative; Bun converts it in memory during a
 frozen install without writing another lockfile.
 
-The release workflow builds and verifies an npm archive before passing that same
-archive and its SHA-512 integrity to `scripts/Publish-Npm.ps1`. Publication uses
-C# in `scripts/NpmPublisher.cs`, compiled in memory by the thin PowerShell 7.4+
-entry point using `Add-Type`, with GitHub OIDC Trusted Publishing. No Node.js,
-npm CLI, .NET SDK or NuGet packages are required for publication. Native cosign 3.1.4,
-verified against a fixed SHA-256 and the upstream Sigstore signature, signs the
-npm SLSA v1 statement. The script verifies the workflow identity, GitHub issuer,
-and archive digest before uploading the archive and provenance together. An
-identical published version is skipped only when registry metadata also advertises
-SLSA v1 provenance at an npm registry attestation URL. This metadata check does not
-cryptographically reverify the registry's stored bundle. Different bytes for that
-version stop publication. Only a pre-publication HTTP 404 permits a publication
-attempt; other lookup errors or malformed metadata stop it. After local archive,
-provenance signature and digest validation, a successful npm PUT is reported as
-accepted publication. The publisher does not fetch or wait for public distribution
-visibility after PUT. HTTP rejection and communication errors still fail without
-retrying PUT; inspect registry state before retrying an unknown outcome. The
-PowerShell entry point loads C# types in a source-hash-specific
-namespace so a different source version cannot silently reuse a previously loaded type.
+The release workflow publishes only its verified archive and SHA-512 through
+scripts/Publish-Npm.ps1, using C# compiled in memory by PowerShell 7.4+ Add-Type.
+The self-hosted Linux workflow supplies secrets.NPM_TOKEN as NODE_AUTH_TOKEN only
+to the publication step. Direct calls may use NPM_TOKEN as fallback. The token
+must grant package publication. No Node/npm, .NET SDK, NuGet, OIDC exchange or
+cosign is needed. Provenance is omitted because npm does not support trusted
+publishing/provenance on self-hosted runners. The exact archive digest is rechecked
+immediately before PUT. Existing versions require identical registry integrity;
+missing attestations are accepted, while old provenance metadata must retain its
+SLSA v1 type and package-specific npm registry URL. This does not cryptographically
+reverify old bundles. Only a pre-publication 404 permits PUT. A successful PUT
+header means npm acceptance without body parsing or waiting for propagation.
+Rejection and unknown outcomes fail without retrying PUT; inspect registry state
+before retrying an unknown outcome. Source-hash-specific namespaces preserve
+PowerShell source reload isolation.
