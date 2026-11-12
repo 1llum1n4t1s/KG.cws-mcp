@@ -10,8 +10,8 @@ permissions:
 
 jobs:
   validate:
-    if: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && (github.event_name == 'workflow_dispatch' || github.event.pull_request.user.login == 'dependabot[bot]') }}
-    runs-on: [self-hosted, Linux, ARM64, m3mb14]
+    if: github.event_name == 'workflow_dispatch' || github.event.pull_request.user.login == 'dependabot[bot]'
+    runs-on: ubuntu-latest
     timeout-minutes: 25
     defaults:
       run:
@@ -23,12 +23,12 @@ jobs:
       - name: Prepare verified Bun build toolchain
         run: |
           set -euo pipefail
-          archive="$RUNNER_TEMP/bun-linux-aarch64.zip"
-          curl --fail --location --retry 3 -o "$archive" https://github.com/oven-sh/bun/releases/download/bun-v1.4.4/bun-linux-aarch64.zip
-          echo 'baa6bb36f51d6e58561e02bbea825038a9df454f673d6d776e8bbf86f8c7850e  '"$archive" | sha256sum -c -
+          archive="$RUNNER_TEMP/bun-linux-x64-baseline.zip"
+          curl --fail --location --retry 3 -o "$archive" https://github.com/oven-sh/bun/releases/download/bun-v1.4.4/bun-linux-x64-baseline.zip
+          echo 'e0446eb55995772eb9894bebae9a6be368d985a8b9271ee124486f9946eedd76  '"$archive" | sha256sum -c -
           unzip -q "$archive" -d "$RUNNER_TEMP/bun"
-          "$RUNNER_TEMP/bun/bun-linux-aarch64/bun" --version | grep -x '1.4.4'
-          echo "$RUNNER_TEMP/bun/bun-linux-aarch64" >> "$GITHUB_PATH"
+          "$RUNNER_TEMP/bun/bun-linux-x64-baseline/bun" --version | grep -x '1.4.4'
+          echo "$RUNNER_TEMP/bun/bun-linux-x64-baseline" >> "$GITHUB_PATH"
       - name: Validate native npm publisher contracts
         shell: pwsh
         run: ./scripts/Test-NpmPublisher.ps1 -WorkDirectory (Join-Path $env:RUNNER_TEMP 'npm-publisher-contracts')
