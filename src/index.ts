@@ -2,6 +2,7 @@
 
 import { McpServer, ResourceTemplate } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
+import type { ShapeOutput } from "@modelcontextprotocol/sdk/server/zod-compat.js";
 import { z } from "zod";
 import { readFileSync } from "node:fs";
 import { createSign } from "node:crypto";
@@ -341,6 +342,20 @@ async function uploadZip(pub: string, id: string, zipData: Buffer<ArrayBuffer>) 
   );
 }
 
+/**
+ * publish / submit 共通の publish リクエスト送信。
+ * ボディが空なら Content-Type も本文も付けず、CWS 側の既定値に任せる。
+ * 結果の整形は呼び出し側の責務（publish は formatResponse、submit は手順付きの独自整形）。
+ */
+async function postPublish(pub: string, id: string, opts: Parameters<typeof buildPublishBody>[0]) {
+  const body = buildPublishBody(opts);
+  const hasBody = Object.keys(body).length > 0;
+  return apiCall(itemUrl(pub, id, "publish"), {
+    method: "POST",
+    ...(hasBody ? { headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) } : {}),
+  });
+}
+
 type ToolResult = {
   content: { type: "text"; text: string }[];
   isError: boolean;
@@ -640,6 +655,28 @@ const publisherIdSchema = z
   .optional()
   .describe("Publisher ID (defaults to CWS_PUBLISHER_ID env var or 'me')");
 
+// publish / submit が共有する公開オプション。受理する入力を両ツールで揃えるため型・制約は1か所に置く。
+// publishType / blockOnWarnings は各ツールで説明文が異なるため、describe なしのベースだけを共有し、
+// ツール定義側で現行の説明を付ける（tools/list の出力を変えないため）。
+const publishTypeBase = z.enum(["DEFAULT_PUBLISH", "STAGED_PUBLISH"]).optional();
+const blockOnWarningsBase = z.boolean().optional();
+const deployPercentageSchema = z
+  .number()
+  .int()
+  .min(0)
+  .max(100)
+  .optional()
+  .describe("Initial deploy percentage for staged rollout (0-100).");
+const skipReviewSchema = z
+  .boolean()
+  .optional()
+  .describe("Attempt to skip review if the extension qualifies. Defaults to false.");
+/** reviews / metrics 共通のページトークン。 */
+const pageTokenSchema = z
+  .string()
+  .optional()
+  .describe("nextPageToken from a previous call. Keep all other parameters identical when paginating.");
+
 const schemas = {
   upload: {
     zipPath: z.string().describe("Absolute path to the ZIP file to upload"),
@@ -649,27 +686,14 @@ const schemas = {
   publish: {
     itemId: itemIdSchema,
     publisherId: publisherIdSchema,
-    publishType: z
-      .enum(["DEFAULT_PUBLISH", "STAGED_PUBLISH"])
-      .optional()
-      .describe(
-        "DEFAULT_PUBLISH: publishes immediately after approval. STAGED_PUBLISH: stages for manual publishing after approval. Defaults to DEFAULT_PUBLISH.",
-      ),
-    deployPercentage: z
-      .number()
-      .int()
-      .min(0)
-      .max(100)
-      .optional()
-      .describe("Initial deploy percentage for staged rollout (0-100)."),
-    skipReview: z
-      .boolean()
-      .optional()
-      .describe("Attempt to skip review if the extension qualifies. Defaults to false."),
-    blockOnWarnings: z
-      .boolean()
-      .optional()
-      .describe("If true, the publish is blocked when the submission has warnings. Defaults to false."),
+    publishType: publishTypeBase.describe(
+      "DEFAULT_PUBLISH: publishes immediately after approval. STAGED_PUBLISH: stages for manual publishing after approval. Defaults to DEFAULT_PUBLISH.",
+    ),
+    deployPercentage: deployPercentageSchema,
+    skipReview: skipReviewSchema,
+    blockOnWarnings: blockOnWarningsBase.describe(
+      "If true, the publish is blocked when the submission has warnings. Defaults to false.",
+    ),
   },
   status: {
     itemId: itemIdSchema,
@@ -715,27 +739,14 @@ const schemas = {
     zipPath: z.string().describe("Absolute path to the ZIP file to upload and submit"),
     itemId: itemIdSchema,
     publisherId: publisherIdSchema,
-    publishType: z
-      .enum(["DEFAULT_PUBLISH", "STAGED_PUBLISH"])
-      .optional()
-      .describe(
-        "DEFAULT_PUBLISH (default): publish immediately after approval. STAGED_PUBLISH: stage for manual publishing.",
-      ),
-    deployPercentage: z
-      .number()
-      .int()
-      .min(0)
-      .max(100)
-      .optional()
-      .describe("Initial deploy percentage for staged rollout (0-100)."),
-    skipReview: z
-      .boolean()
-      .optional()
-      .describe("Attempt to skip review if the extension qualifies. Defaults to false."),
-    blockOnWarnings: z
-      .boolean()
-      .optional()
-      .describe("If true, block the publish when the submission has warnings. Defaults to false."),
+    publishType: publishTypeBase.describe(
+      "DEFAULT_PUBLISH (default): publish immediately after approval. STAGED_PUBLISH: stage for manual publishing.",
+    ),
+    deployPercentage: deployPercentageSchema,
+    skipReview: skipReviewSchema,
+    blockOnWarnings: blockOnWarningsBase.describe(
+      "If true, block the publish when the submission has warnings. Defaults to false.",
+    ),
     preflight: z
       .boolean()
       .optional()
@@ -751,10 +762,7 @@ const schemas = {
       .max(200)
       .optional()
       .describe("Maximum reviews to return (1-200). Defaults to at most 50."),
-    pageToken: z
-      .string()
-      .optional()
-      .describe("nextPageToken from a previous call. Keep all other parameters identical when paginating."),
+    pageToken: pageTokenSchema,
     orderBy: z
       .string()
       .optional()
@@ -800,10 +808,7 @@ const schemas = {
       .max(1000)
       .optional()
       .describe("Maximum rows to return (1-1000). Defaults to at most 100."),
-    pageToken: z
-      .string()
-      .optional()
-      .describe("nextPageToken from a previous call. Keep all other parameters identical when paginating."),
+    pageToken: pageTokenSchema,
   },
   rollback: {
     itemId: itemIdSchema,
@@ -865,180 +870,128 @@ const server = new McpServer({
   version: VERSION,
 });
 
-// ── upload ──
-server.registerTool(
-  "upload",
-  { description: descriptions.upload, inputSchema: schemas.upload },
-  async ({ zipPath, itemId, publisherId }) => {
+type ToolName = keyof typeof schemas;
+
+/**
+ * schemas / descriptions と同じ名前で main server へツールを登録する。
+ * - 名前から schema と description を引くため、3者のずれを構造的に防ぐ（登録漏れは tools/list の件数確認で担保）。
+ * - handler の例外は toolError（`Error: <message>`）へ変換する。`return await` にしないと
+ *   非同期の拒否が catch を素通りし、SDK 既定の文言で返ってしまうので注意。
+ * - tools/list の順序は登録順で決まるため、呼び出し順を変えないこと。
+ */
+function defineTool<K extends ToolName>(
+  name: K,
+  handler: (args: ShapeOutput<(typeof schemas)[K]>) => Promise<ToolResult>,
+): void {
+  const wrapped = async (args: ShapeOutput<(typeof schemas)[K]>): Promise<ToolResult> => {
     try {
-      const id = resolveItemId(itemId);
-      const pub = resolvePublisherId(publisherId);
-      const zipData = readFileSync(zipPath);
-
-      const result = await uploadZip(pub, id, zipData);
-
-      return formatUploadResponse(result);
+      return await handler(args);
     } catch (e) {
       return toolError(e);
     }
-  },
-);
+  };
+  // ToolCallback<S[K]> はジェネリック内で条件型の解決が遅延するため、内側の登録1か所だけキャストする。
+  // handler 側の引数型は ShapeOutput で schemas から推論されるので、各ツールの型安全性は保たれる。
+  server.registerTool(
+    name,
+    { description: descriptions[name], inputSchema: schemas[name] },
+    wrapped as never,
+  );
+}
+
+// ── upload ──
+defineTool("upload", async ({ zipPath, itemId, publisherId }) => {
+  const id = resolveItemId(itemId);
+  const pub = resolvePublisherId(publisherId);
+  const zipData = readFileSync(zipPath);
+  return formatUploadResponse(await uploadZip(pub, id, zipData));
+});
 
 // ── publish ──
-server.registerTool(
-  "publish",
-  { description: descriptions.publish, inputSchema: schemas.publish },
-  async ({ itemId, publisherId, publishType, deployPercentage, skipReview, blockOnWarnings }) => {
-    try {
-      const id = resolveItemId(itemId);
-      const pub = resolvePublisherId(publisherId);
-
-      const url = itemUrl(pub, id, "publish");
-
-      const body = buildPublishBody({ publishType, deployPercentage, skipReview, blockOnWarnings });
-
-      const hasBody = Object.keys(body).length > 0;
-      const result = await apiCall(url, {
-        method: "POST",
-        ...(hasBody
-          ? { headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) }
-          : {}),
-      });
-
-      return formatResponse(result);
-    } catch (e) {
-      return toolError(e);
-    }
-  },
-);
+defineTool("publish", async ({ itemId, publisherId, publishType, deployPercentage, skipReview, blockOnWarnings }) => {
+  const id = resolveItemId(itemId);
+  const pub = resolvePublisherId(publisherId);
+  return formatResponse(await postPublish(pub, id, { publishType, deployPercentage, skipReview, blockOnWarnings }));
+});
 
 // ── status ──
-server.registerTool(
-  "status",
-  { description: descriptions.status, inputSchema: schemas.status },
-  async ({ itemId, publisherId }) => {
-    try {
-      const id = resolveItemId(itemId);
-      const pub = resolvePublisherId(publisherId);
+defineTool("status", async ({ itemId, publisherId }) => {
+  const id = resolveItemId(itemId);
+  const pub = resolvePublisherId(publisherId);
+  const result = await apiCall(itemUrl(pub, id, "fetchStatus"), { method: "GET" });
 
-      const url = itemUrl(pub, id, "fetchStatus");
-      const result = await apiCall(url, { method: "GET" });
-
-      const formatted = formatResponse(result);
-      if (result.ok) {
-        const summary = summarizeStatus(result.body);
-        if (summary) return appendNote(formatted, summary);
-      }
-      return formatted;
-    } catch (e) {
-      return toolError(e);
-    }
-  },
-);
+  const formatted = formatResponse(result);
+  if (result.ok) {
+    const summary = summarizeStatus(result.body);
+    if (summary) return appendNote(formatted, summary);
+  }
+  return formatted;
+});
 
 // ── cancel ──
-server.registerTool(
-  "cancel",
-  { description: descriptions.cancel, inputSchema: schemas.cancel },
-  async ({ itemId, publisherId }) => {
-    try {
-      const id = resolveItemId(itemId);
-      const pub = resolvePublisherId(publisherId);
-
-      const url = itemUrl(pub, id, "cancelSubmission");
-      const result = await apiCall(url, { method: "POST" });
-
-      return formatResponse(result);
-    } catch (e) {
-      return toolError(e);
-    }
-  },
-);
+defineTool("cancel", async ({ itemId, publisherId }) => {
+  const id = resolveItemId(itemId);
+  const pub = resolvePublisherId(publisherId);
+  return formatResponse(await apiCall(itemUrl(pub, id, "cancelSubmission"), { method: "POST" }));
+});
 
 // ── deploy-percentage ──
-server.registerTool(
-  "deploy-percentage",
-  { description: descriptions["deploy-percentage"], inputSchema: schemas["deploy-percentage"] },
-  async ({ percentage, itemId, publisherId }) => {
-    try {
-      const id = resolveItemId(itemId);
-      const pub = resolvePublisherId(publisherId);
-
-      const url = itemUrl(pub, id, "setPublishedDeployPercentage");
-      const result = await apiCall(url, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ deployPercentage: percentage }),
-      });
-
-      return formatResponse(result);
-    } catch (e) {
-      return toolError(e);
-    }
-  },
-);
+defineTool("deploy-percentage", async ({ percentage, itemId, publisherId }) => {
+  const id = resolveItemId(itemId);
+  const pub = resolvePublisherId(publisherId);
+  const result = await apiCall(itemUrl(pub, id, "setPublishedDeployPercentage"), {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ deployPercentage: percentage }),
+  });
+  return formatResponse(result);
+});
 
 // ── get (v1.1 — deprecated, sunset Oct 2026) ──
-server.registerTool(
-  "get",
-  { description: descriptions.get, inputSchema: schemas.get },
-  async ({ itemId, projection }) => {
-    try {
-      const guard = v1SunsetGuard();
-      if (guard) return guard;
-      const id = resolveItemId(itemId);
-      const p = projection || "DRAFT";
-      const url = `${V1_BASE}/items/${id}?projection=${encodeURIComponent(p)}`;
-      const result = await apiCall(url, { method: "GET" });
-
-      return appendNote(formatResponse(result), V1_NOTE);
-    } catch (e) {
-      return toolError(e);
-    }
-  },
-);
+defineTool("get", async ({ itemId, projection }) => {
+  const guard = v1SunsetGuard();
+  if (guard) return guard;
+  const id = resolveItemId(itemId);
+  const p = projection || "DRAFT";
+  const result = await apiCall(`${V1_BASE}/items/${id}?projection=${encodeURIComponent(p)}`, { method: "GET" });
+  return appendNote(formatResponse(result), V1_NOTE);
+});
 
 // ── update-metadata (v1.1 — deprecated, sunset Oct 2026) ──
-server.registerTool(
+defineTool(
   "update-metadata",
-  { description: descriptions["update-metadata"], inputSchema: schemas["update-metadata"] },
   async ({ itemId, title, summary, description, category, defaultLocale, homepageUrl, supportUrl, metadata }) => {
-    try {
-      const guard = v1SunsetGuard();
-      if (guard) return guard;
-      const id = resolveItemId(itemId);
-      const url = `${V1_BASE}/items/${id}`;
+    const guard = v1SunsetGuard();
+    if (guard) return guard;
+    const id = resolveItemId(itemId);
 
-      const payload: Record<string, unknown> = { ...(metadata || {}) };
-      if (title !== undefined) payload.title = title;
-      if (summary !== undefined) payload.summary = summary;
-      if (description !== undefined) payload.description = description;
-      if (category !== undefined) payload.category = category;
-      if (defaultLocale !== undefined) payload.defaultLocale = defaultLocale;
-      if (homepageUrl !== undefined) payload.homepageUrl = homepageUrl;
-      if (supportUrl !== undefined) payload.supportUrl = supportUrl;
+    const payload: Record<string, unknown> = { ...(metadata || {}) };
+    if (title !== undefined) payload.title = title;
+    if (summary !== undefined) payload.summary = summary;
+    if (description !== undefined) payload.description = description;
+    if (category !== undefined) payload.category = category;
+    if (defaultLocale !== undefined) payload.defaultLocale = defaultLocale;
+    if (homepageUrl !== undefined) payload.homepageUrl = homepageUrl;
+    if (supportUrl !== undefined) payload.supportUrl = supportUrl;
 
-      if (Object.keys(payload).length === 0) {
-        throw new Error("No metadata fields provided.");
-      }
-
-      const result = await apiCall(url, {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
-      });
-
-      return appendNote(formatResponse(result), V1_NOTE);
-    } catch (e) {
-      return toolError(e);
+    if (Object.keys(payload).length === 0) {
+      throw new Error("No metadata fields provided.");
     }
+
+    const result = await apiCall(`${V1_BASE}/items/${id}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    return appendNote(formatResponse(result), V1_NOTE);
   },
 );
 
 // ── submit (one-shot: preflight → upload → publish → status) ──
-server.registerTool(
+// 確定済みの副作用（アップロード・公開）を失わないよう、submit は独自の catch で部分成功を返す。
+// defineTool 側の catch には到達しない。
+defineTool(
   "submit",
-  { description: descriptions.submit, inputSchema: schemas.submit },
   async ({ zipPath, itemId, publisherId, publishType, deployPercentage, skipReview, blockOnWarnings, preflight }) => {
     const steps: { step: string; ok: boolean; detail?: string }[] = [];
     const formatSteps = (): string => [
@@ -1101,16 +1054,10 @@ server.registerTool(
       if (uploadResult.isError) return appendNote(uploadResult, formatSteps());
       uploadComplete = true;
 
-      // 3) Publish
+      // 3) Publish（例外時に Steps の失敗行が publish と表示されるよう、送信前に currentStep を更新する。
+      //    「publish 結果不明」への分岐は uploadComplete と completedPublishResponse で決まる）
       currentStep = "publish";
-      const publishBody = buildPublishBody({ publishType, deployPercentage, skipReview, blockOnWarnings });
-      const hasBody = Object.keys(publishBody).length > 0;
-      const publishRes = await apiCall(itemUrl(pub, id, "publish"), {
-        method: "POST",
-        ...(hasBody
-          ? { headers: { "Content-Type": "application/json" }, body: JSON.stringify(publishBody) }
-          : {}),
-      });
+      const publishRes = await postPublish(pub, id, { publishType, deployPercentage, skipReview, blockOnWarnings });
       steps.push({ step: "publish", ok: publishRes.ok, detail: `HTTP ${publishRes.status}` });
       if (!publishRes.ok) {
         const hint = interpretCwsError(publishRes.status, publishRes.body);
@@ -1174,80 +1121,48 @@ server.registerTool(
 );
 
 // ── reviews (v2 fetchReviews) ──
-server.registerTool(
-  "reviews",
-  { description: descriptions.reviews, inputSchema: schemas.reviews },
-  async ({ itemId, publisherId, pageSize, pageToken, orderBy, filter }) => {
-    try {
-      const id = resolveItemId(itemId);
-      const pub = resolvePublisherId(publisherId);
-      const url = withQuery(itemUrl(pub, id, "fetchReviews"), buildReviewsQuery({ pageSize, pageToken, orderBy, filter }));
-      return formatResponse(await apiCall(url, { method: "GET" }));
-    } catch (e) {
-      return toolError(e);
-    }
-  },
-);
+defineTool("reviews", async ({ itemId, publisherId, pageSize, pageToken, orderBy, filter }) => {
+  const id = resolveItemId(itemId);
+  const pub = resolvePublisherId(publisherId);
+  const url = withQuery(itemUrl(pub, id, "fetchReviews"), buildReviewsQuery({ pageSize, pageToken, orderBy, filter }));
+  return formatResponse(await apiCall(url, { method: "GET" }));
+});
 
 // ── rating-summary (v2 getRatingSummary) ──
-server.registerTool(
-  "rating-summary",
-  { description: descriptions["rating-summary"], inputSchema: schemas["rating-summary"] },
-  async ({ itemId, publisherId }) => {
-    try {
-      const id = resolveItemId(itemId);
-      const pub = resolvePublisherId(publisherId);
-      return formatResponse(await apiCall(itemResourceUrl(pub, id, "ratingSummary"), { method: "GET" }));
-    } catch (e) {
-      return toolError(e);
-    }
-  },
-);
+defineTool("rating-summary", async ({ itemId, publisherId }) => {
+  const id = resolveItemId(itemId);
+  const pub = resolvePublisherId(publisherId);
+  return formatResponse(await apiCall(itemResourceUrl(pub, id, "ratingSummary"), { method: "GET" }));
+});
 
 // ── metrics (v2 queryMetrics) ──
-server.registerTool(
-  "metrics",
-  { description: descriptions.metrics, inputSchema: schemas.metrics },
-  async ({ itemId, publisherId, metrics, dimension, firstDate, lastDate, pageSize, pageToken }) => {
-    try {
-      const id = resolveItemId(itemId);
-      const pub = resolvePublisherId(publisherId);
-      const query = buildMetricsQuery({ metrics, dimension, firstDate, lastDate, pageSize, pageToken });
-      return formatResponse(await apiCall(withQuery(itemUrl(pub, id, "queryMetrics"), query), { method: "GET" }));
-    } catch (e) {
-      return toolError(e);
-    }
-  },
-);
+defineTool("metrics", async ({ itemId, publisherId, metrics, dimension, firstDate, lastDate, pageSize, pageToken }) => {
+  const id = resolveItemId(itemId);
+  const pub = resolvePublisherId(publisherId);
+  const query = buildMetricsQuery({ metrics, dimension, firstDate, lastDate, pageSize, pageToken });
+  return formatResponse(await apiCall(withQuery(itemUrl(pub, id, "queryMetrics"), query), { method: "GET" }));
+});
 
 // ── rollback (v2 rollback) ──
-server.registerTool(
-  "rollback",
-  { description: descriptions.rollback, inputSchema: schemas.rollback },
-  async ({ itemId, publisherId, newVersion, rollbackReason, targetCrxVersion, validateOnly }) => {
-    try {
-      const id = resolveItemId(itemId);
-      const pub = resolvePublisherId(publisherId);
-      const body = buildRollbackBody({ newVersion, rollbackReason, targetCrxVersion, validateOnly });
-      const result = await apiCall(itemUrl(pub, id, "rollback"), {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(body),
-      });
-      if (!result.ok) return formatResponse(result);
+defineTool("rollback", async ({ itemId, publisherId, newVersion, rollbackReason, targetCrxVersion, validateOnly }) => {
+  const id = resolveItemId(itemId);
+  const pub = resolvePublisherId(publisherId);
+  const body = buildRollbackBody({ newVersion, rollbackReason, targetCrxVersion, validateOnly });
+  const result = await apiCall(itemUrl(pub, id, "rollback"), {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  if (!result.ok) return formatResponse(result);
 
-      // 成功時のレスポンスボディは空なので、dry run と実ロールバックを明示的に区別して返す。
-      const target = targetCrxVersion ? `version ${targetCrxVersion}` : "the last published version";
-      const text = validateOnly
-        ? `Validation succeeded (dry run): rolling back to ${target} as new version ${newVersion} is allowed. No rollback was performed.`
-        : `Rollback initiated: ${target} is being re-published as version ${newVersion} to all users (usually live within a minute). ` +
-          "Pending and staged submissions were discarded. Use 'status' to confirm the published revision.";
-      return { content: [{ type: "text", text: result.body.trim() ? `${text}\n\nResponse body:\n${result.body}` : text }], isError: false };
-    } catch (e) {
-      return toolError(e);
-    }
-  },
-);
+  // 成功時のレスポンスボディは空なので、dry run と実ロールバックを明示的に区別して返す。
+  const target = targetCrxVersion ? `version ${targetCrxVersion}` : "the last published version";
+  const text = validateOnly
+    ? `Validation succeeded (dry run): rolling back to ${target} as new version ${newVersion} is allowed. No rollback was performed.`
+    : `Rollback initiated: ${target} is being re-published as version ${newVersion} to all users (usually live within a minute). ` +
+      "Pending and staged submissions were discarded. Use 'status' to confirm the published revision.";
+  return { content: [{ type: "text", text: result.body.trim() ? `${text}\n\nResponse body:\n${result.body}` : text }], isError: false };
+});
 
 // ── Resources ──
 
