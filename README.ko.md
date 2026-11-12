@@ -15,6 +15,9 @@ Chrome Web Store 확장 프로그램 관리를 위한 MCP 서버. Claude Code �
 - **"확장 프로그램 리뷰 상태 확인해줘"** — `status`로 리뷰 상태, 버전, 배포 비율 확인
 - **"제출 대기 중인 거 취소해줘"** — `cancel`로 리뷰 중인 제출 철회
 - **"확장 프로그램 단계적 배포 설정해줘"** — `publish`로 단계적 배포 후 `deploy-percentage`로 비율 증가
+- **"새 릴리스에 문제가 있어, 롤백해줘"** — `rollback` 사용 (먼저 `validateOnly=true`로 검증)
+- **"최근 리뷰랑 평점 보여줘"** — `reviews`와 `rating-summary` 사용
+- **"지난달 설치 수와 활성 사용자 수 알려줘"** — `metrics` 사용
 
 ## 도구
 
@@ -28,6 +31,14 @@ Chrome Web Store 확장 프로그램 관리를 위한 MCP 서버. Claude Code �
 | `deploy-percentage` | 단계적 배포 비율 설정 (0-100, 현재 목표보다 높아야 함) |
 | `get` | 이전 메타데이터 조회 도구; 2026-10-15 00:00 UTC 이후 차단 |
 | `update-metadata` | 이전 메타데이터 수정 도구; 2026-10-15 00:00 UTC 이후 차단 |
+| `rollback` | 이전에 퍼블리시된 버전을 더 높은 새 버전 번호로 재퍼블리시 (리뷰 없음, `validateOnly` 드라이런 지원) |
+| `reviews` | 사용자 리뷰 조회 (페이지네이션, `rating`/`create_time desc` 정렬, 평점 필터) |
+| `rating-summary` | 평균 평점, 평점 수, 별점별 개수 조회 |
+| `metrics` | 기간별 설치·제거·일간/7일 사용자·노출·페이지 조회 수 조회 (차원 하나로 분할 가능) |
+
+`reviews`, `rating-summary`, `metrics`는 읽기 전용이며 `https://www.googleapis.com/auth/chromewebstore.readonly` 범위만 가진 자격 증명도 허용됩니다. 단, 이 서버는 서비스 계정에 대해 전체 `chromewebstore` 범위를 요청합니다.
+
+`rollback`은 리뷰 없이 약 1분 내에 모든 사용자에게 적용되고, 대기 중·스테이징된 제출을 폐기하며, 비율 배포 중이면 100%로 배포됐던 마지막 버전으로 되돌립니다. 반드시 먼저 `validateOnly=true`로 검증하세요.
 
 ## API 커버리지
 
@@ -40,6 +51,10 @@ Chrome Web Store 확장 프로그램 관리를 위한 MCP 서버. Claude Code �
 | `publishers.items.fetchStatus` | `status` |
 | `publishers.items.cancelSubmission` | `cancel` |
 | `publishers.items.setPublishedDeployPercentage` | `deploy-percentage` |
+| `publishers.items.rollback` | `rollback` |
+| `publishers.items.fetchReviews` | `reviews` |
+| `publishers.items.getRatingSummary` | `rating-summary` |
+| `publishers.items.queryMetrics` | `metrics` |
 
 이전 v1.1 도구(`get`, `update-metadata`)는 호환성을 위해 등록되어 있지만 종료 시각 이후 차단됩니다. 리스팅 메타데이터는 Chrome Web Store 개발자 대시보드에서 확인하고 수정하세요. 심사 상태, 버전, 배포 비율은 `status`를 사용하세요. v2 API에는 메타데이터 읽기/쓰기 엔드포인트가 없으며 이 MCP는 브라우저 자동화를 사용하지 않습니다.
 

@@ -2,7 +2,7 @@
 
 > MCP server for Chrome Web Store extension management. Upload, publish, and manage Chrome extensions from any MCP-compatible AI agent.
 
-## Tools (8)
+## Tools (12)
 
 - upload: Upload a ZIP file to Chrome Web Store (updates existing item draft)
 - publish: Publish an extension with optional staged rollout, publish type, and skip-review
@@ -12,6 +12,10 @@
 - get: Legacy metadata read; blocked after 2026-10-15 00:00 UTC. Use status for review/version/rollout; read listing metadata in the Developer Dashboard.
 - update-metadata: Legacy metadata write; blocked after 2026-10-15 00:00 UTC. Edit listing metadata in the Developer Dashboard.
 - submit: One-shot upload → publish → status in a single call (with existence-check preflight and readable errors)
+- rollback: Re-publish a previously published version under a new higher version number; no review, discards pending/staged submissions, aborts percentage rollouts. Validate first with validateOnly=true.
+- reviews: Fetch user reviews (pagination, orderBy rating / create_time desc, filter "rating = N")
+- rating-summary: Average rating, rating count, per-star counts
+- metrics: Query installs, installs-7d, uninstalls, users, users-7d, impressions, page-views over YYYY-MM-DD dates, optionally sliced by one dimension
 - upload/submit require confirmed upload completion (SUCCEEDED or compatible SUCCESS without itemError). Pending or unknown completion returns an error and submit does not publish; no automatic polling. Check status before publishing alone. lastAsyncUploadState covers only the latest asynchronous upload within 24 hours; verify the intended draft in the Developer Dashboard if ambiguous or another upload occurred.
 - status summaries include takenDown/warned flags and lastAsyncUploadState when provided; active policy flags require Developer Dashboard review.
 
@@ -48,7 +52,7 @@ Authentication: provide EITHER a service account (Auth A, recommended for CI/CD)
 
 ## API Coverage
 
-Supports these Chrome Web Store API v2 endpoints: media.upload, publishers.items.publish, publishers.items.fetchStatus, publishers.items.cancelSubmission, publishers.items.setPublishedDeployPercentage. Legacy v1.1 metadata tools remain registered but are blocked after the cutoff. Resource reads also skip v1 after the cutoff and return metadata.unavailable alongside v2 status. This server is API only and does not automate the browser.
+Supports these Chrome Web Store API v2 endpoints: media.upload, publishers.items.publish, publishers.items.fetchStatus, publishers.items.cancelSubmission, publishers.items.setPublishedDeployPercentage, publishers.items.rollback, publishers.items.fetchReviews, publishers.items.getRatingSummary, publishers.items.queryMetrics. Legacy v1.1 metadata tools remain registered but are blocked after the cutoff. Resource reads also skip v1 after the cutoff and return metadata.unavailable alongside v2 status. This server is API only and does not automate the browser.
 
 ## Notes
 

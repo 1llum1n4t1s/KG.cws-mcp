@@ -206,6 +206,94 @@ function itemUrl(pub: string, id: string, action: string): string {
   return `${API_BASE}/v2/publishers/${pub}/items/${id}:${action}`;
 }
 
+/**
+ * v2 API のアイテム配下リソース URL（例: ratingSummary）を組み立てる。
+ * `:action` 形式ではないため itemUrl とは分ける。pub/id は安全化済みの前提。
+ */
+function itemResourceUrl(pub: string, id: string, resource: string): string {
+  return `${API_BASE}/v2/publishers/${pub}/items/${id}/${resource}`;
+}
+
+/** URL にクエリを付ける（空のクエリなら `?` を付けない）。 */
+function withQuery(url: string, query: URLSearchParams): string {
+  const qs = query.toString();
+  return qs ? `${url}?${qs}` : url;
+}
+
+/** fetchReviews のクエリを組み立てる。省略された値は送らず CWS 側の既定に任せる。 */
+function buildReviewsQuery(opts: {
+  pageSize?: number;
+  pageToken?: string;
+  orderBy?: string;
+  filter?: string;
+}): URLSearchParams {
+  const q = new URLSearchParams();
+  if (opts.pageSize !== undefined) q.set("pageSize", String(opts.pageSize));
+  if (opts.pageToken) q.set("pageToken", opts.pageToken);
+  if (opts.orderBy) q.set("orderBy", opts.orderBy);
+  if (opts.filter) q.set("filter", opts.filter);
+  return q;
+}
+
+/** queryMetrics が受け付ける指標・次元（Discovery revision 20261110 時点）。 */
+const METRICS = ["installs", "installs-7d", "uninstalls", "users", "users-7d", "impressions", "page-views"] as const;
+const METRIC_DIMENSIONS = [
+  "os",
+  "app-version",
+  "country",
+  "install-source",
+  "install-type",
+  "language",
+  "enabled",
+  "utm-campaign",
+  "utm-content",
+  "utm-medium",
+  "utm-source",
+  "utm-term",
+] as const;
+
+/**
+ * queryMetrics のクエリを組み立てる。
+ * - metrics / dimensions は repeated パラメータなので値ごとに append する（カンマ結合しない）。
+ * - timeSpec は gRPC Transcoding で `timeSpec.firstDate.year` のように平坦化される。
+ *   ツール側では扱いやすい YYYY-MM-DD を受け取り、ここで年月日に分解する。
+ */
+function buildMetricsQuery(opts: {
+  metrics: readonly string[];
+  dimension?: string;
+  firstDate?: string;
+  lastDate?: string;
+  pageSize?: number;
+  pageToken?: string;
+}): URLSearchParams {
+  const q = new URLSearchParams();
+  for (const m of opts.metrics) q.append("metrics", m);
+  if (opts.dimension) q.append("dimensions", opts.dimension);
+  for (const [key, value] of [["firstDate", opts.firstDate], ["lastDate", opts.lastDate]] as const) {
+    if (!value) continue;
+    const [year, month, day] = value.split("-");
+    q.set(`timeSpec.${key}.year`, String(Number(year)));
+    q.set(`timeSpec.${key}.month`, String(Number(month)));
+    q.set(`timeSpec.${key}.day`, String(Number(day)));
+  }
+  if (opts.pageSize !== undefined) q.set("pageSize", String(opts.pageSize));
+  if (opts.pageToken) q.set("pageToken", opts.pageToken);
+  return q;
+}
+
+/** rollback のリクエストボディを組み立てる。targetCrxVersion は指定時のみ送る（未指定時は直前の公開版が対象）。 */
+function buildRollbackBody(opts: {
+  newVersion: string;
+  rollbackReason: string;
+  targetCrxVersion?: string;
+  validateOnly?: boolean;
+}): Record<string, unknown> {
+  const body: Record<string, unknown> = { newVersion: opts.newVersion, rollbackReason: opts.rollbackReason };
+  if (opts.targetCrxVersion) body.targetCrxVersion = opts.targetCrxVersion;
+  if (opts.validateOnly !== undefined) body.validateOnly = opts.validateOnly;
+  return body;
+}
+
 /** publish / submit 共通の publish リクエストボディを組み立てる。 */
 function buildPublishBody(opts: {
   publishType?: string;
@@ -382,7 +470,8 @@ function formatUploadResponse(result: { ok: boolean; status: number; body: strin
   const hasItemError = itemError != null && (!Array.isArray(itemError) || itemError.length > 0);
   if (!hasItemError && (state === "SUCCEEDED" || state === "SUCCESS")) return formatResponse(result);
 
-  const failed = hasItemError || state === "FAILED";
+  // NOT_FOUND は v2 の UploadState 列挙値。対象アップロードが見つからない＝成功ではないので失敗扱い。
+  const failed = hasItemError || state === "FAILED" || state === "NOT_FOUND";
   const pending = state === "IN_PROGRESS" || state === "PROCESSING" || state === "UPLOAD_IN_PROGRESS";
   const outcome = failed ? "Upload failed" : pending ? "Upload is still processing" : "Upload completion could not be confirmed";
   const hint = interpretCwsError(result.status, result.body);
@@ -652,6 +741,91 @@ const schemas = {
       .optional()
       .describe("Verify the item exists before uploading (default: true). Set false to skip the pre-check."),
   },
+  reviews: {
+    itemId: itemIdSchema,
+    publisherId: publisherIdSchema,
+    pageSize: z
+      .number()
+      .int()
+      .min(1)
+      .max(200)
+      .optional()
+      .describe("Maximum reviews to return (1-200). Defaults to at most 50."),
+    pageToken: z
+      .string()
+      .optional()
+      .describe("nextPageToken from a previous call. Keep all other parameters identical when paginating."),
+    orderBy: z
+      .string()
+      .optional()
+      .describe(
+        "Comma-separated sort fields: 'rating' (asc default, or 'rating desc') and 'create_time desc' (only desc; must be explicit). Example: 'create_time desc'.",
+      ),
+    filter: z
+      .string()
+      .optional()
+      .describe("Filter expression. Only rating equality is supported, e.g. 'rating = 1'."),
+  },
+  "rating-summary": {
+    itemId: itemIdSchema,
+    publisherId: publisherIdSchema,
+  },
+  metrics: {
+    itemId: itemIdSchema,
+    publisherId: publisherIdSchema,
+    metrics: z
+      .array(z.enum(METRICS))
+      .min(1)
+      .describe(
+        "Metrics to query: installs, installs-7d, uninstalls, users (daily active), users-7d, impressions, page-views.",
+      ),
+    dimension: z
+      .enum(METRIC_DIMENSIONS)
+      .optional()
+      .describe("Optional single dimension to slice by (the API allows at most one)."),
+    firstDate: z
+      .string()
+      .regex(/^\d{4}-\d{2}-\d{2}$/)
+      .optional()
+      .describe("First date (inclusive), YYYY-MM-DD. Omit for no lower bound."),
+    lastDate: z
+      .string()
+      .regex(/^\d{4}-\d{2}-\d{2}$/)
+      .optional()
+      .describe("Last date (inclusive), YYYY-MM-DD. Omit for no upper bound."),
+    pageSize: z
+      .number()
+      .int()
+      .min(1)
+      .max(1000)
+      .optional()
+      .describe("Maximum rows to return (1-1000). Defaults to at most 100."),
+    pageToken: z
+      .string()
+      .optional()
+      .describe("nextPageToken from a previous call. Keep all other parameters identical when paginating."),
+  },
+  rollback: {
+    itemId: itemIdSchema,
+    publisherId: publisherIdSchema,
+    newVersion: z
+      .string()
+      .describe(
+        "New version number for the re-published package. Must be higher than the currently published version (e.g. current 1.1 → 1.2).",
+      ),
+    rollbackReason: z
+      .string()
+      .min(1)
+      .describe("Reason for the rollback (recorded for auditing and shown in the Developer Dashboard)."),
+    targetCrxVersion: z
+      .string()
+      .optional()
+      .describe("Previously published CRX version to roll back to. Defaults to the last published version."),
+    validateOnly: z
+      .boolean()
+      .optional()
+      .describe("If true, only validate (dry run) without rolling back. Recommended before a real rollback."),
+  },
 } as const;
 
 const descriptions: Record<keyof typeof schemas, string> = {
@@ -671,6 +845,17 @@ const descriptions: Record<keyof typeof schemas, string> = {
     `Legacy listing metadata update. ${V1_NOTE}`,
   submit:
     "One-shot submission: (optional preflight existence check) → upload the ZIP → verify the upload succeeded → publish for review → return the final status with a readable summary. Stops without publishing if upload completion is unconfirmed; check status and confirm the intended draft before using publish alone. No automatic polling.",
+  reviews:
+    "Fetch user reviews (rating, comment, author display name, create time) for a Chrome Web Store item, with pagination, sorting, and rating filter. Read-only.",
+  "rating-summary":
+    "Fetch the rating summary of a Chrome Web Store item: average rating, total rating count, per-star counts, and number of reviews with text. Read-only.",
+  metrics:
+    "Query store metrics for a Chrome Web Store item (installs, uninstalls, daily/7-day users, impressions, page views) over an optional date range, optionally sliced by one dimension (os, country, language, app-version, install-source, UTM, etc.). Read-only.",
+  rollback:
+    "Roll back the published package to a previously published version, re-published under a new higher version number. " +
+    "WARNING: a real rollback goes live to all users within about a minute without review, discards pending and staged submissions, " +
+    "and aborts ongoing percentage rollouts (reverting to the last version deployed at 100%). Repeated rollbacks cycle between the same two versions. " +
+    "Run with validateOnly=true first, and ensure the older version is compatible with data stored by the newer one.",
 };
 
 // ── MCP Server ──
@@ -988,6 +1173,82 @@ server.registerTool(
   },
 );
 
+// ── reviews (v2 fetchReviews) ──
+server.registerTool(
+  "reviews",
+  { description: descriptions.reviews, inputSchema: schemas.reviews },
+  async ({ itemId, publisherId, pageSize, pageToken, orderBy, filter }) => {
+    try {
+      const id = resolveItemId(itemId);
+      const pub = resolvePublisherId(publisherId);
+      const url = withQuery(itemUrl(pub, id, "fetchReviews"), buildReviewsQuery({ pageSize, pageToken, orderBy, filter }));
+      return formatResponse(await apiCall(url, { method: "GET" }));
+    } catch (e) {
+      return toolError(e);
+    }
+  },
+);
+
+// ── rating-summary (v2 getRatingSummary) ──
+server.registerTool(
+  "rating-summary",
+  { description: descriptions["rating-summary"], inputSchema: schemas["rating-summary"] },
+  async ({ itemId, publisherId }) => {
+    try {
+      const id = resolveItemId(itemId);
+      const pub = resolvePublisherId(publisherId);
+      return formatResponse(await apiCall(itemResourceUrl(pub, id, "ratingSummary"), { method: "GET" }));
+    } catch (e) {
+      return toolError(e);
+    }
+  },
+);
+
+// ── metrics (v2 queryMetrics) ──
+server.registerTool(
+  "metrics",
+  { description: descriptions.metrics, inputSchema: schemas.metrics },
+  async ({ itemId, publisherId, metrics, dimension, firstDate, lastDate, pageSize, pageToken }) => {
+    try {
+      const id = resolveItemId(itemId);
+      const pub = resolvePublisherId(publisherId);
+      const query = buildMetricsQuery({ metrics, dimension, firstDate, lastDate, pageSize, pageToken });
+      return formatResponse(await apiCall(withQuery(itemUrl(pub, id, "queryMetrics"), query), { method: "GET" }));
+    } catch (e) {
+      return toolError(e);
+    }
+  },
+);
+
+// ── rollback (v2 rollback) ──
+server.registerTool(
+  "rollback",
+  { description: descriptions.rollback, inputSchema: schemas.rollback },
+  async ({ itemId, publisherId, newVersion, rollbackReason, targetCrxVersion, validateOnly }) => {
+    try {
+      const id = resolveItemId(itemId);
+      const pub = resolvePublisherId(publisherId);
+      const body = buildRollbackBody({ newVersion, rollbackReason, targetCrxVersion, validateOnly });
+      const result = await apiCall(itemUrl(pub, id, "rollback"), {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      if (!result.ok) return formatResponse(result);
+
+      // 成功時のレスポンスボディは空なので、dry run と実ロールバックを明示的に区別して返す。
+      const target = targetCrxVersion ? `version ${targetCrxVersion}` : "the last published version";
+      const text = validateOnly
+        ? `Validation succeeded (dry run): rolling back to ${target} as new version ${newVersion} is allowed. No rollback was performed.`
+        : `Rollback initiated: ${target} is being re-published as version ${newVersion} to all users (usually live within a minute). ` +
+          "Pending and staged submissions were discarded. Use 'status' to confirm the published revision.";
+      return { content: [{ type: "text", text: result.body.trim() ? `${text}\n\nResponse body:\n${result.body}` : text }], isError: false };
+    } catch (e) {
+      return toolError(e);
+    }
+  },
+);
+
 // ── Resources ──
 
 server.registerResource(
@@ -1080,6 +1341,7 @@ Tip: for a one-shot flow, the \`submit\` tool runs preflight → upload → publ
 4. **Publish** — Use the \`publish\` tool to submit the draft for review. For an initial rollout percentage, set deployPercentage=10. Use publishType="STAGED_PUBLISH" only to wait for manual publication after approval, or skipReview=true if eligible.
 5. **Confirm submission** — Use \`status\` to check the returned submitted/published revision state.
 6. **Optional staged rollout** — After approval and publication, use \`deploy-percentage\` to gradually roll out (e.g., 10%, 50%, 100%).
+7. **If the release is broken** — \`rollback\` re-publishes the previous version under a new higher version number without review and discards pending submissions. Run it with validateOnly=true first, and only roll back after I confirm.
 
 Please start with step 1 now.`,
         },
@@ -1111,7 +1373,8 @@ Use the following cws-mcp tools to gather a full picture:
 
 1. **Fetch status** — Use the \`status\` tool with itemId="${extensionId}" to get the returned revision states and deployment information.
 2. **Listing metadata, if needed** — Read it in the Developer Dashboard. Do not call \`get\` or \`update-metadata\` after the v1.1 cutoff (${V1_SUNSET}); those tools are blocked. The \`status\` response supplies review/version/rollout information, not listing text.
-3. **Summarize** — Report:
+3. **Optional user signals** — Use \`rating-summary\` for the current rating, and \`reviews\` with orderBy="create_time desc" for recent user feedback, if useful.
+4. **Summarize** — Report:
    - Returned revision states (e.g., PENDING_REVIEW, STAGED, PUBLISHED, REJECTED)
    - Deployed version and deploy percentage if in staged rollout
    - Review or rejection details if returned. If a rejection, takedown, warning, or other problem is indicated but its details are missing or unclear, check the Developer Dashboard. Do not infer approval from missing problem details.

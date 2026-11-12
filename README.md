@@ -18,6 +18,9 @@ Use this MCP when you need to:
 - **"Upload and publish in one step"** — use `submit` to run upload → publish → status as a single call
 - **"Cancel a pending submission"** — use `cancel` to withdraw a submission under review
 - **"Set up staged rollout for my extension"** — use `publish` with `deployPercentage`, then `deploy-percentage` to ramp up
+- **"The new release is broken, roll it back"** — use `rollback` (validate first with `validateOnly=true`)
+- **"Show my latest reviews / rating"** — use `reviews` and `rating-summary`
+- **"How many installs and active users did I get last month?"** — use `metrics`
 
 ## Tools
 
@@ -30,6 +33,12 @@ Use this MCP when you need to:
 | `deploy-percentage` | Set staged rollout percentage (0-100, must exceed current target) |
 | `get`, `update-metadata` | Legacy metadata tools; blocked by the server after its v1 cutoff (see below) |
 | `submit` | One-shot: run upload → publish → status in a single call (with existence preflight and readable errors) |
+| `rollback` | Re-publish a previously published version under a new higher version number (no review; supports `validateOnly` dry run) |
+| `reviews` | Fetch user reviews with pagination, sorting (`rating`, `create_time desc`) and rating filter |
+| `rating-summary` | Fetch average rating, rating count, and per-star counts |
+| `metrics` | Query installs, uninstalls, daily/7-day users, impressions, and page views over a date range, optionally sliced by one dimension |
+
+`reviews`, `rating-summary`, and `metrics` are read-only; they also accept credentials limited to the `https://www.googleapis.com/auth/chromewebstore.readonly` scope, but the server requests the full `chromewebstore` scope for service accounts.
 
 > The Chrome Web Store API cannot create items. Create a new item manually in the Chrome Web Store Developer Dashboard, then use `upload` / `publish` (or `submit`) against its item ID.
 
@@ -171,6 +180,25 @@ Use cws-mcp publish with skipReview=true
 
 Note: `deploy-percentage` is only available for extensions with 10,000+ seven-day active users. The new percentage must always be higher than the current target.
 
+### Roll back a broken release
+```
+1. Use cws-mcp rollback with newVersion="1.2.1", rollbackReason="crash on startup", validateOnly=true
+2. If validation succeeds, run the same call without validateOnly
+3. Use cws-mcp status to confirm the published revision
+```
+
+A rollback goes live to all users within about a minute without review. It discards pending and staged submissions, and during a percentage rollout it reverts to the last version deployed at 100%. `newVersion` must be higher than the current published version. Repeated rollbacks cycle between the same two versions, so make sure the older version can handle data written by the newer one.
+
+### Reviews, ratings, and metrics
+```
+Use cws-mcp reviews with orderBy="create_time desc", pageSize=20
+Use cws-mcp reviews with filter="rating = 1"
+Use cws-mcp rating-summary
+Use cws-mcp metrics with metrics=["installs","users-7d"], firstDate="2026-10-01", lastDate="2026-10-31", dimension="country"
+```
+
+`metrics` accepts at most one dimension. Results are paginated; pass the returned `nextPageToken` as `pageToken` with otherwise identical parameters.
+
 ## Troubleshooting
 
 - **Missing credentials / 401 / 403:** check the environment of the server process and item/publisher access. A configured service-account key takes precedence; invalid service-account credentials do not fall back to OAuth.
@@ -178,6 +206,7 @@ Note: `deploy-percentage` is only available for extensions with 10,000+ seven-da
 - **Unreadable ZIP:** `zipPath` must point to a file accessible on the machine running the MCP server, including inside its container if applicable. Build the ZIP before calling `upload` or `submit`.
 - **Upload still processing or completion unknown:** `upload` and `submit` report success only for a confirmed successful upload. `submit` stops before publishing otherwise; neither tool polls automatically. Avoid another upload or repeating `submit` while processing may continue. Use `status` to check `lastAsyncUploadState`, then use `publish` alone only after confirming the intended ZIP succeeded. This status covers the latest asynchronous upload within 24 hours, so if another upload occurred or the state is absent or ambiguous, verify the draft in the Developer Dashboard first.
 - **Already in review / duplicate version:** wait for review or use `cancel` before uploading; for a duplicate version, increase the extension's `manifest.json` version and rebuild its ZIP.
+- **Upload state `NOT_FOUND`:** treated as a failed upload; publish is not attempted. Re-check the item ID and upload again.
 - **Upload succeeded but publish failed:** for an HTTP error, retry `publish` alone. If the publish request timed out or the connection failed, check `status` first because the publish result is unknown. Re-running `submit` uploads the ZIP again. `submit` retains completed steps on communication errors and returns an immediate status snapshot; it does not wait for review completion. Check `status` again if the final status step failed, and inspect the raw response when a summary has no extracted issues.
 - **Legacy metadata error:** use the Developer Dashboard as described under [Listing metadata](#listing-metadata).
 

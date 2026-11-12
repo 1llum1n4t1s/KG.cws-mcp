@@ -57,8 +57,8 @@ jobs:
           try {
             await client.connect(transport);
             const result = await client.listTools();
-            if (result.tools.length !== 8) throw new Error('Expected eight MCP tools');
-            console.log('MCP initialization and eight-tool discovery succeeded');
+            if (result.tools.length !== 12) throw new Error('Expected twelve MCP tools');
+            console.log('MCP initialization and twelve-tool discovery succeeded');
           } finally {
             await client.close();
             clearTimeout(timeout);
@@ -94,12 +94,12 @@ jobs:
           try {
             await client.connect(transport);
             const result = await client.listTools();
-            if (result.tools.length !== 8) throw new Error('Expected eight MCP tools');
+            if (result.tools.length !== 12) throw new Error('Expected twelve MCP tools');
             const status = await client.callTool({ name: 'status', arguments: { itemId: 'fixture' } });
             if (!status.isError || !status.content.some(item => item.type === 'text' && item.text.includes('Missing credentials'))) {
               throw new Error('Expected the safe missing-credentials response');
             }
-            console.log('Node MCP initialization, eight-tool discovery and safe authentication failure succeeded');
+            console.log('Node MCP initialization, twelve-tool discovery and safe authentication failure succeeded');
           } finally {
             await client.close();
             clearTimeout(timeout);

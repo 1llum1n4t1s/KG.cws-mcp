@@ -20,7 +20,7 @@ There is no dedicated TypeScript application test suite or test runner. Type che
 printf '%s\n' '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"t","version":"1"}}}' '{"jsonrpc":"2.0","method":"notifications/initialized"}' '{"jsonrpc":"2.0","id":2,"method":"tools/list"}' | bun --no-env-file --no-install dist/index.js
 ```
 
-Expect a `serverInfo` result and eight tool definitions. Discovery requires no credentials: authentication is lazy. Actual API calls require the credentials described in README; upload/publish checks change store state, so use only an explicitly authorized item.
+Expect a `serverInfo` result and twelve tool definitions. Discovery requires no credentials: authentication is lazy. Actual API calls require the credentials described in README; upload/publish checks change store state, so use only an explicitly authorized item.
 
 ## Implementation constraints
 
@@ -41,6 +41,6 @@ Expect a `serverInfo` result and eight tool definitions. Discovery requires no c
 - Change versions only on explicit release requests. Keep `package.json` and both version fields in `server.json` synchronized. The release workflow checks a `release/x.y.z` branch suffix against `package.json` before publishing.
 - The npm-publish.yml workflow runs install, build, pack, verification and OIDC publication on GitHub-hosted ubuntu-latest to meet npm provenance requirements. Normal dependency validation remains on M3 Linux ARM64. No saved publication token is needed. Preserve the existing release/manual conditions, workflow filename, archive allowlist and manifest assertions.
 - Dependabot covers npm, GitHub Actions, and Docker from the repository root; include all three when maintaining dependency automation.
-- Keep dependency validation's type check, build, and credential-free eight-tool discovery check aligned with the verification above.
+- Keep dependency validation's type check, build, and credential-free twelve-tool discovery check aligned with the verification above.
 - After publisher changes, run `pwsh -NoProfile -File scripts/Test-NpmPublisher.ps1 -WorkDirectory <dedicated-absolute-work-path>`. This compiles the C# publisher in memory using PowerShell 7.4+, with no .NET SDK or npm publication runtime. Tests use fixture archives, mocked HTTP/cosign and a localhost redirect check without live credentials. Use an empty work directory and clean its fixture files afterwards. Only an npm version lookup returning 404 permits a new publication attempt.
 - For actual Bun archive validation, run `pwsh -NoProfile -File scripts/Test-VerifiedNpmArchive.ps1 -PackageFile <archive> -WorkDirectory <empty-absolute-work-path>` (D: on Windows). This verifies source contents and exercises only the internal unsigned preparation path with deny-only HTTP/signing implementations. Dependency validation reuses its build and toolchain to pack once; release validation reuses `PACKED_TARBALL` without repacking. Both run within existing jobs, without publishing from this test.

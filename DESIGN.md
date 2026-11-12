@@ -18,7 +18,7 @@ All runtime code is in `src/index.ts`; `tsconfig.json` compiles it to `dist/inde
 | `apiCall` | Attach Bearer auth, apply request timeouts, return HTTP status/body, and clear the cached token on 401/403 for the next call. No automatic retry. |
 | Response helpers | Preserve API responses, add actionable error hints and a best-effort status summary with separate published/submitted revisions and release-channel values. Issue wording/key matching is heuristic; raw status remains necessary. |
 | `schemas` / `descriptions` | Shared zod tool contracts for the main server and Smithery's no-op discovery server. Main handlers are registered separately. |
-| MCP handlers | Eight tools, one extension resource template, and two prompts. Adapt protocol input to CWS requests and return text/JSON content. |
+| MCP handlers | Twelve tools, one extension resource template, and two prompts. Adapt protocol input to CWS requests and return text/JSON content. |
 
 ## API and protocol surfaces
 
@@ -32,7 +32,13 @@ The v2 base is `https://chromewebstore.googleapis.com`; uploads use `/upload/v2/
 | `cancel` | POST `cancelSubmission` |
 | `deploy-percentage` | POST `setPublishedDeployPercentage` |
 | `submit` | Compose status preflight, upload, publish, and final status |
+| `rollback` | POST `rollback` |
+| `reviews` | GET `fetchReviews` |
+| `rating-summary` | GET `/v2/publishers/{publisherId}/items/{itemId}/ratingSummary` (resource path, not an action) |
+| `metrics` | GET `queryMetrics` |
 | `get`, `update-metadata` | Legacy GET/PUT under `https://www.googleapis.com/chromewebstore/v1.1/items/{itemId}` |
+
+Query builders are pure helpers. `metrics` sends each metric as a repeated `metrics` parameter and at most one `dimensions` value, and converts `YYYY-MM-DD` dates into the flattened `timeSpec.firstDate|lastDate.year|month|day` parameters. `rollback` forwards `targetCrxVersion` only when supplied (CWS then defaults to the last published version); because a successful rollback returns an empty body, the tool reports whether it was a `validateOnly` dry run or a real rollback. The v2 method set and enums were last reconciled with the discovery document revision 20261110. An upload state of `NOT_FOUND` is treated as failed.
 
 The two legacy tools remain registered, but `v1SunsetGuard` returns an error before authentication/network access when the clock is later than `2026-10-15T00:00:00Z`. There is no v2 metadata replacement in this server.
 
