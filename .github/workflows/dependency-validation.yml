@@ -109,6 +109,6 @@ jobs:
       - name: Prepare current Node compatibility runtime
         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
-          node-version: '26.13.0'
+          node-version: '26.13.1'
       - name: Validate current Node stdio compatibility
-        run: EXPECTED_NODE_VERSION=26.13.0 node --input-type=module - < "$RUNNER_TEMP/cws-node-smoke.mjs"
+        run: EXPECTED_NODE_VERSION=26.13.1 node --input-type=module - < "$RUNNER_TEMP/cws-node-smoke.mjs"
