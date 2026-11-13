@@ -77,7 +77,7 @@ frozen install without writing another lockfile.
 The release workflow keeps npm Trusted Publishing (GitHub OIDC). Install, build,
 pack, verification and publication run on GitHub-hosted ubuntu-latest to meet
 the cloud-hosted build requirement for npm provenance. Normal dependency
-validation remains on M3MB14 Linux ARM64. The verified SHA-512 and manifest
+validation also runs on GitHub-hosted ubuntu-latest. The verified SHA-512 and manifest
 are checked before publishing the same archive without repacking. Native C#/.NET and
 PowerShell publish through OIDC exchange and cosign 3.1.4 provenance. Binary hash,
 upstream signature, signed subject, workflow identity, issuer and archive digest
