@@ -50,7 +50,9 @@ Use `status` for review state, version, and rollout information. Prompts direct 
 
 ## Setup
 
-Install Node.js **20 or newer** to use the `npx` examples below, or install Bun and replace `"command": "npx"` and `"args": ["-y", "@kagayoi/cws-mcp"]` with `"command": "bun"` and `"args": ["x", "--bun", "@kagayoi/cws-mcp"]` to run without Node.js. Neither option requires a global package installation.
+Install Node.js **20 or newer** to use the `npx` examples below, or install Bun and replace `"command": "npx"` and `"args": ["--yes", "@kagayoi/cws-mcp@latest"]` with `"command": "bunx"` and `"args": ["--bun", "@kagayoi/cws-mcp@latest"]` (the same as running `bunx --bun @kagayoi/cws-mcp@latest`) to run without Node.js. Neither option requires a global package installation. With `@latest`, every launch runs the newest npm release.
+
+If you already registered the server with a pinned version (for example `@kagayoi/cws-mcp@2.0.10`) or without a version (`@kagayoi/cws-mcp`), change the package argument in that registration to `@kagayoi/cws-mcp@latest`; updating this README does not change existing registrations, but after that edit each launch uses the latest release automatically.
 
 Authenticate with **either** a service account (recommended, ideal for CI/CD) **or** an OAuth2 refresh token.
 
@@ -98,7 +100,7 @@ Add the following server definition to your MCP client's configuration. The exam
   "mcpServers": {
     "cws-mcp": {
       "command": "npx",
-      "args": ["-y", "@kagayoi/cws-mcp"],
+      "args": ["--yes", "@kagayoi/cws-mcp@latest"],
       "env": {
         "CWS_SERVICE_ACCOUNT_KEY": "/path/to/service-account.json",
         "CWS_PUBLISHER_ID": "me",
@@ -116,7 +118,7 @@ Add the following server definition to your MCP client's configuration. The exam
   "mcpServers": {
     "cws-mcp": {
       "command": "npx",
-      "args": ["-y", "@kagayoi/cws-mcp"],
+      "args": ["--yes", "@kagayoi/cws-mcp@latest"],
       "env": {
         "CWS_CLIENT_ID": "xxxxx.apps.googleusercontent.com",
         "CWS_CLIENT_SECRET": "GOCSPX-xxxxx",

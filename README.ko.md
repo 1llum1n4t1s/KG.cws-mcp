@@ -101,7 +101,9 @@ Chrome Web Store API는 새 항목(아이템) 생성을 지원하지 않습니�
 
 다음 서버 정의를 MCP 클라이언트 설정에 추가하세요. 예제는 `mcpServers` 형식을 사용합니다. 설정 파일 위치나 서버 추가 명령은 사용 중인 클라이언트의 문서를 참고하세요.
 
-아래 `npx` 예제에는 Node.js 20 이상이 필요합니다. Node.js 없이 Bun을 사용하려면 `"command": "npx"`와 `"args": ["-y", "@kagayoi/cws-mcp"]`를 각각 `"command": "bun"`과 `"args": ["x", "--bun", "@kagayoi/cws-mcp"]`로 바꾸세요.
+아래 `npx` 예제에는 Node.js 20 이상이 필요합니다. Node.js 없이 Bun을 사용하려면 `"command": "npx"`와 `"args": ["--yes", "@kagayoi/cws-mcp@latest"]`를 각각 `"command": "bunx"`와 `"args": ["--bun", "@kagayoi/cws-mcp@latest"]`로 바꾸세요(명령으로는 `bunx --bun @kagayoi/cws-mcp@latest`). `@latest`를 지정하면 실행할 때마다 npm의 최신 버전을 사용합니다.
+
+이미 `@kagayoi/cws-mcp@2.0.10`처럼 버전을 고정하거나 버전 없이(`@kagayoi/cws-mcp`) 등록했다면, 등록된 실행 인수를 `@kagayoi/cws-mcp@latest`로 바꾸세요. README를 바꿔도 기존 등록은 바뀌지 않지만, 한 번 바꾸면 이후에는 자동으로 최신 버전을 사용합니다.
 
 **npm + 서비스 계정 (권장):**
 
@@ -110,7 +112,7 @@ Chrome Web Store API는 새 항목(아이템) 생성을 지원하지 않습니�
   "mcpServers": {
     "cws-mcp": {
       "command": "npx",
-      "args": ["-y", "@kagayoi/cws-mcp"],
+      "args": ["--yes", "@kagayoi/cws-mcp@latest"],
       "env": {
         "CWS_SERVICE_ACCOUNT_KEY": "/path/to/service-account.json",
         "CWS_PUBLISHER_ID": "me",
@@ -128,7 +130,7 @@ Chrome Web Store API는 새 항목(아이템) 생성을 지원하지 않습니�
   "mcpServers": {
     "cws-mcp": {
       "command": "npx",
-      "args": ["-y", "@kagayoi/cws-mcp"],
+      "args": ["--yes", "@kagayoi/cws-mcp@latest"],
       "env": {
         "CWS_CLIENT_ID": "xxxxx.apps.googleusercontent.com",
         "CWS_CLIENT_SECRET": "GOCSPX-xxxxx",
