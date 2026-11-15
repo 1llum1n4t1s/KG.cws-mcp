@@ -14,7 +14,7 @@ if ($manifest.name -cne '@kagayoi/cws-mcp' -or $manifest.version -cnotmatch '^\d
 if ($manifest.main -cne 'dist/index.js' -or $manifest.bin.Count -ne 1 -or $manifest.bin['cws-mcp'] -cne 'dist/index.js' -or
     $manifest.files.Count -ne 3 -or $manifest.files[0] -cne 'dist/**/*' -or $manifest.files[1] -cne 'LICENSE' -or $manifest.files[2] -cne 'README.md') { throw 'Package entry point or files contract differs' }
 $expected = [Collections.Generic.Dictionary[string, string]]::new([StringComparer]::Ordinal)
-foreach ($file in @('LICENSE', 'README.ko.md', 'README.md', 'dist/index.d.ts', 'dist/index.js', 'package.json')) {
+foreach ($file in @('LICENSE', 'README.de.md', 'README.es.md', 'README.fr.md', 'README.ja.md', 'README.ko.md', 'README.md', 'README.pt-BR.md', 'README.zh-CN.md', 'README.zh-TW.md', 'dist/index.d.ts', 'dist/index.js', 'package.json')) {
     $expected.Add('package/' + $file, (Join-Path $root $file))
 }
 $seen = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
