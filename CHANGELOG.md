@@ -4,6 +4,10 @@ Git のバージョン記録・コミット差分と既存の変更履歴をも�
 
 ## 未リリース
 
+## [2.0.12] — 2026-11-15
+
+- README を英語の正本（README.md）と8言語版（ja・zh-CN・zh-TW・ko・es・fr・de・pt-BR）に統一し、先頭に9言語の切替行を追加。韓国語版を最新の内容に更新。MCP の文言は AI が読むため英語のまま。
+
 ## [2.0.11] — 2026-11-15
 
 - README・llms.txt・smithery.yaml の起動例を `npx --yes @kagayoi/cws-mcp@latest`（Bun は `bunx --bun @kagayoi/cws-mcp@latest`）に統一し、起動のたびに最新版を使うよう変更。登録済みの起動引数を `@latest` に書き換える移行案内を追加。
