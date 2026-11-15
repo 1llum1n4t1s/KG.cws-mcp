@@ -4,6 +4,10 @@ Git のバージョン記録・コミット差分と既存の変更履歴をも�
 
 ## 未リリース
 
+## [2.0.11] — 2026-11-15
+
+- README・llms.txt・smithery.yaml の起動例を `npx --yes @kagayoi/cws-mcp@latest`（Bun は `bunx --bun @kagayoi/cws-mcp@latest`）に統一し、起動のたびに最新版を使うよう変更。登録済みの起動引数を `@latest` に書き換える移行案内を追加。
+
 ## [2.0.10] — 2026-11-12
 
 - Chrome Web Store API v2 の追加機能に対応し、公開済みバージョンへのロールバック（`rollback`、検証だけの `validateOnly` 対応）、ユーザーレビュー取得（`reviews`）、評価サマリー（`rating-summary`）、インストール数・アクティブユーザー数などの指標取得（`metrics`）ツールを追加。
