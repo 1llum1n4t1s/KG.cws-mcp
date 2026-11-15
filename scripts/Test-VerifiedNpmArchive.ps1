@@ -28,8 +28,8 @@ try {
     $env:TMP = $work
     $env:TMPDIR = $work
     $verified = & (Join-Path $PSScriptRoot 'Verify-BunPackage.ps1') -PackageFile $PackageFile
-    if ($verified.Files -ne 6) { throw 'Verifier did not validate all six archive entries' }
-    Write-Output 'PASS production archive verifier: six entries and source bytes/manifest match'
+    if ($verified.Files -ne 13) { throw 'Verifier did not validate all thirteen archive entries' }
+    Write-Output 'PASS production archive verifier: thirteen entries and source bytes/manifest match'
     $manifest = Get-Content -Raw -LiteralPath (Join-Path (Split-Path -Parent $PSScriptRoot) 'package.json') | ConvertFrom-Json
     Add-Type -Path (Join-Path $PSScriptRoot 'NpmPublisher.cs'), (Join-Path $PSScriptRoot 'NpmPublisher.ArchiveIntegration.Tests.cs')
     [Kagayoi.Npm.ArchiveIntegrationTests]::Run($verified.PackageFile, $verified.Integrity, $manifest.name, $manifest.version, $work)
