@@ -36,12 +36,12 @@ namespace Kagayoi.Npm
         {
             var original = File.ReadAllBytes(packageFile);
             Check(integrity == "sha512-" + Convert.ToBase64String(SHA512.HashData(original)), "Verifier integrity differs.");
-            var branch = "refs/heads/release/" + version;
+            var branch = "refs/tags/v" + version;
             // Source context only: no process environment, OIDC tokens or publication capability.
             var fixture = new Dictionary<string, string>(StringComparer.Ordinal) {
                 ["GITHUB_SERVER_URL"] = "https://github.com", ["GITHUB_REPOSITORY"] = "fixture/archive",
                 ["GITHUB_WORKFLOW_REF"] = "fixture/archive/.github/workflows/offline.yml@" + branch,
-                ["GITHUB_REF"] = branch, ["GITHUB_REF_NAME"] = "release/" + version,
+                ["GITHUB_REF"] = branch, ["GITHUB_REF_NAME"] = "v" + version, ["GITHUB_REF_TYPE"] = "tag",
                 ["GITHUB_SHA"] = new string('a', 40), ["GITHUB_EVENT_NAME"] = "push",
                 ["GITHUB_REPOSITORY_ID"] = "1", ["GITHUB_REPOSITORY_OWNER_ID"] = "2",
                 ["RUNNER_ENVIRONMENT"] = "github-hosted", ["GITHUB_RUN_ID"] = "3", ["GITHUB_RUN_ATTEMPT"] = "1"

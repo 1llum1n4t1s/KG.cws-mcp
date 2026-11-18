@@ -85,5 +85,5 @@ checks remain in place. Identical existing versions require valid provenance
 metadata. A successful PUT header means npm acceptance; its body is not parsed,
 and the publisher does not wait for public registry propagation. Unknown results
 are not retried. Source-hash-specific namespaces retain source reload isolation.
-No saved npm publication token is used. Existing release/manual publication
-conditions are maintained. The workflow filename is unchanged for the existing npm Trusted Publisher.
+No saved npm publication token is used. Publication is triggered by the version tag `vX.Y.Z`
+(manual dispatch with the tag as `--ref` re-runs it); the workflow and the publisher both require a tag ref equal to `v<version>`. The workflow filename is unchanged for the existing npm Trusted Publisher.
